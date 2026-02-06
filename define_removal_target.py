@@ -1,24 +1,56 @@
 def define_removal_target():
-    while True:
-        try:
-            removalTarget = float(input("Please define a a removal target: "))
-            if removalTarget >= 0:
-                break
-            else:
-                print("Error: The value must be greater than or equal to 0. Please try again.")
-        except ValueError:
-            print("Invalid input. Please enter a numeric value.")
+    regions = ["Europe", "North America"]
 
+    # Select region
     while True:
+        print("Select the region where the CDR portfolio will be deployed:")
+        for i, region in enumerate(regions, start=1):
+            print(f"{i}. {region}")
+
         try:
-            currentYear = int(input("Please define your investment strategy:\n"
-                                 "Enter 1 to invest all at once\n"
-                                 "Enter 2 to calculate optimal investment date\n"
-                                 "Enter 3 to specify investment times (years from now)\n"
-                                 "Your choice (1/2/3): "))
-            if currentYear in [1, 2, 3]:
+            region_choice = int(input("Enter the number of your choice: "))
+            if 1 <= region_choice <= len(regions):
+                selected_region = regions[region_choice - 1]
                 break
             else:
-                print("Invalid choice. Please enter 1, 2, or 3.")
+                print("Invalid choice. Try again.\n")
         except ValueError:
-            print("Invalid input. Please enter a number (1, 2, or 3).")
+            print("Please enter a number.\n")
+
+    # Select target type
+    while True:
+        print("\nDefine the removal target type:")
+        print("0. Total (cumulative) storage target")
+        print("1. Yearly storage target")
+
+        try:
+            target_type = int(input("Enter 0 or 1: "))
+            if target_type in (0, 1):
+                break
+            else:
+                print("Invalid choice. Try again.\n")
+        except ValueError:
+            print("Please enter a number.\n")
+
+    # Enter storage target
+    while True:
+        try:
+            storage_target = float(input("\nEnter the storage target amount in Megatons(Mt): "))
+            if storage_target > 0:
+                break
+            else:
+                print("Storage target must be greater than 0.\n")
+        except ValueError:
+            print("Please enter a numeric value.\n")
+
+    target_type_map = {
+    0: "Cumulative",
+    1: "Yearly"
+    }
+
+    return {
+    "region": selected_region,
+    "target_type": target_type,             
+    "target_type_name": target_type_map[target_type],
+    "storage_target": storage_target
+}
