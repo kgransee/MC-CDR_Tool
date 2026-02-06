@@ -35,10 +35,9 @@ def get_cdr_from_user():
             except ValueError:
                 print("Invalid input. Please enter a valid number.")
     
-    mac = input_float("MAC (number): ")
-    maxRemove = input_float("Max removal (number): ")
-    initialCost = input_float("Initial cost (number): ")
-    sideEffectMax = input_float("Side effect max (number): ")
+    mac = input_float("Cost per ton of CO2 removed (Euros): ")
+    maxRemove = input_float("Maximum CO2 removal capacity (Gt)")
+    initialCost = input_float("Initial cost (Euros): ")
 
     # Input validation for sideEffect
     def input_side_effect():
@@ -53,6 +52,7 @@ def get_cdr_from_user():
                 print("Invalid input. Please enter a number.")
 
     sideEffect = input_side_effect()
+    sideEffectMax = input_float("Side-effect constrained maximum removal capacity (Gt): ")
 
     # Options for storageType
     storage_options = [
@@ -77,7 +77,6 @@ def get_cdr_from_user():
         except ValueError:
             print("Invalid input. Please enter a number.")
 
-    location = input("Location: ")
 
     return CDRMethod(
         mainType=mainType,
@@ -85,28 +84,9 @@ def get_cdr_from_user():
         mac=mac,
         maxRemove=maxRemove,
         initialCost=initialCost,
-        location=location,
         storageType=storageType,
         sideEffect=sideEffect,
         sideEffectMax=sideEffectMax
     )
 
-def collect_cdr_methods():
-    cdr_methods = []
 
-    while True:
-        try:
-            cdr = get_cdr_from_user()
-            cdr_methods.append(cdr)
-            print("CDR Method added!\n")
-
-        except ValueError as e:
-            print(f"Error: {e}")
-            print("Please try entering this method again.\n")
-            continue
-
-        again = input("Add another CDR method? (y/n): ").strip().lower()
-        if again != "y":
-            break
-
-    return cdr_methods

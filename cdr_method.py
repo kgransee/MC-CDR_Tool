@@ -7,7 +7,6 @@ class CDRMethod:
     mac: float
     maxRemove: float
     initialCost: float
-    location: str
     storageType: str
     sideEffect: str
     sideEffectMax: float = field(repr=False)
@@ -27,8 +26,8 @@ class CDRMethod:
         if self.initialCost < 0:
             raise ValueError("Initial cost must be >= 0")
         if self.mac < 0:
-            raise ValueError("MAC must be >= 0")
+            raise ValueError("Cost per ton of CO2 removed must be >= 0")
         if self.maxRemove < 0:
-            raise ValueError("maxRemove must be >= 0")
+            raise ValueError("Maximum CO2 removal capacity (Gt) must be >= 0")
         if self.sideEffectMax < 0:
-            raise ValueError("sideEffectMax must be >= 0")
+            raise ValueError("Side-effect constrained maximum removal capacity (Gt) must be >= 0")

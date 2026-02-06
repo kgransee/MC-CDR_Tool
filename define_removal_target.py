@@ -35,7 +35,7 @@ def define_removal_target():
     # Enter storage target
     while True:
         try:
-            storage_target = float(input("\nEnter the storage target amount in Megatons(Mt): "))
+            storage_target = float(input("\nEnter the storage target amount in Gigatons(Gt): "))
             if storage_target > 0:
                 break
             else:
@@ -47,10 +47,46 @@ def define_removal_target():
     0: "Cumulative",
     1: "Yearly"
     }
+    while True:
+        try:
+            current_year = int(input("What is the current year? "))
+            break
+        except ValueError:
+            print("Please enter a valid integer year.") 
+    if target_type == 1:  # Yearly target
+        while True:
+            try:
+                start_year = int(input("In which year will the removals begin? "))
+                break
+            except ValueError:
+                print("Please enter a valid integer year.")
+
+        while True:
+            try:
+                duration_years = int(input("For how many years will the removals be sustained? "))
+                if duration_years > 0:
+                    break
+                else:
+                    print("Duration must be a positive integer.")
+            except ValueError:
+                print("Please enter a valid integer.")
+
+    elif target_type == 0:  # Cumulative target
+        duration_years = 0 #will be calculated later based on the yearly target and the total target
+        start_year = None
+        while True:
+            try:
+                start_year = int(input("In which year will the removals begin? "))
+                break
+            except ValueError:
+                print("Please enter a valid integer year.")
 
     return {
     "region": selected_region,
     "target_type": target_type,             
     "target_type_name": target_type_map[target_type],
-    "storage_target": storage_target
+    "storage_target": storage_target,
+    "start_year": start_year,
+    "duration_years": duration_years,
+    "current_year": current_year
 }
