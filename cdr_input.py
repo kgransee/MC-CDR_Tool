@@ -1,4 +1,6 @@
+from pathlib import Path
 from cdr_method import CDRMethod
+import pandas as pd
 
 def get_cdr_from_user():
     print("\nEnter CDR Method Information")
@@ -89,4 +91,25 @@ def get_cdr_from_user():
         sideEffectMax=sideEffectMax
     )
 
+def import_cdr_from_excel(excel_path="CDRMethods.xlsx"):
+    if excel_path is None:
+        project_root = Path(__file__).resolve().parent
+        excel_path = project_root / "CDRMethods.xlsx"
+    file = pd.read_excel(excel_path)
+    cdr_methods = []
+
+    for _, row in file.iterrows():
+        method = CDRMethod(
+            mainType=row["mainType"],
+            subType=row["subType"],
+            mac=float(row["mac"]),
+            maxRemove=float(row["maxRemove"]),
+            initialCost=float(row["initialCost"]),
+            storageType=row["storageType"],
+            sideEffect=float(row["sideEffect"]),
+            sideEffectMax=float(row["sideEffectMax"])
+        )
+        cdr_methods.append(method)
+
+    return cdr_methods
 

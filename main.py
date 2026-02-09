@@ -1,13 +1,15 @@
-from cdr_input import get_cdr_from_user
+from cdr_input import *
 #from cdr_viable import is_method_viable 
 from cdr_viable import check_storage_feasibility, read_storage_potential, is_method_viable
 from define_removal_target import define_removal_target
+from output_portfolio import *
 
 def main():
     #step 0 is to define removal target
     removal_target = define_removal_target()
     print("\n--- CDR Configuration Summary ---")
     print(f"Region: {removal_target['region']}")
+    region = removal_target['region']
     print(f"Target type: {removal_target['target_type_name']}")
     print(f"Storage target: {removal_target['storage_target']}")
 
@@ -33,14 +35,39 @@ def main():
     print("Please provide potential CDR methods.")
     cdr_methods = []
     #loop for getting CDR methods
-    while True:
-        method = get_cdr_from_user()
-        cdr_methods.append(method)
-        print("CDR Method added!")
+    cdr_methods = []
 
-        again = input("Add another? (y/n): ").lower()
-        if again != 'y':
+    print("\nHow would you like to provide CDR methods?")
+    print("1. Enter methods manually")
+    print("2. Import methods from an Excel file")
+
+    while True:
+        choice = input("Select an option (1 or 2): ").strip()
+        if choice in ("1", "2"):
             break
+        print("Invalid selection. Please enter 1 or 2.")
+    if choice == "1":
+        while True:
+            method = get_cdr_from_user()
+            cdr_methods.append(method)
+            print("CDR Method added!")
+
+            again = input("Add another? (y/n): ").lower()
+            if again != 'y':
+                 break
+
+    # ---- Option 2: Excel import ----
+    elif choice == "2":
+        while True:
+            filepath = input("Enter path to Excel file name: ").strip()
+
+            try:
+                imported_methods = import_cdr_from_excel(filepath)
+                cdr_methods.extend(imported_methods)
+                print(f"{len(imported_methods)} CDR methods imported successfully.")
+                break  # exit loop only on success
+            except Exception as e:
+                print(f"Failed to import Excel file: {e}")
 
     print("\nCollected CDR methods:")
     for m in cdr_methods:
@@ -70,6 +97,7 @@ def main():
     current_year = removal_target["current_year"]
     start_year = removal_target["start_year"]
     duration_years = removal_target["duration_years"]
+    storage_target = removal_target["storage_target"]
     viable_methods = is_method_viable(cdr_methods, SCC, SDR, start_year=start_year,
         duration_years=duration_years, current_year=current_year)
     
@@ -79,10 +107,18 @@ def main():
             print(
                 f"{m.mainType} ({m.subType}) | "
                 f"MAC: {m.mac} €/tCO₂ | "
-                f"Side-effect constrained max: {m.sideEffectMax} Gt"
+                f"Side-effect constrained max: {m.sideEffectMax:.2e} Gt |"
+                f"Discounted Social Benefit: {m.discounted_benefit:.2e} € | "
+                f"Discounted Economic Cost: {m.discounted_cost} € | "
             )
     else:
         print("\nNo CDR methods are viable under the given parameters.")
+    if (region == "Europe"):
+        pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = EuropeanStoragePotential)
+    elif (region == "North America"):
+        pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = NorthAmericanStoragePotential)
+    
+
 
 if __name__ == "__main__":
     main()

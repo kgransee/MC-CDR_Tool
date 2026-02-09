@@ -20,7 +20,7 @@ def define_removal_target():
     # Select target type
     while True:
         print("\nDefine the removal target type:")
-        print("0. Total (cumulative) storage target")
+        print("0. Cumulative storage target")
         print("1. Yearly storage target")
 
         try:
@@ -35,7 +35,7 @@ def define_removal_target():
     # Enter storage target
     while True:
         try:
-            storage_target = float(input("\nEnter the storage target amount in Gigatons(Gt): "))
+            storage_target = float(input("\nEnter the storage target amount in gigatons(Gt): "))
             if storage_target > 0:
                 break
             else:
@@ -72,7 +72,7 @@ def define_removal_target():
                 print("Please enter a valid integer.")
 
     elif target_type == 0:  # Cumulative target
-        duration_years = 0 #will be calculated later based on the yearly target and the total target
+        duration_years = 50 #baseline scenario, will then calculate till 2100 when start year is 20250
         start_year = None
         while True:
             try:

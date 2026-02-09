@@ -52,58 +52,72 @@ def check_storage_feasibility(removal_target, european_potential, north_american
                 print("Invalid input. Please enter a numeric value.")
 
 def is_method_viable(cdr_methods, SCC, SDR, start_year, duration_years, current_year):
-  
-    viableMethods = []
+
+    viable_methods = []
     GT_TO_T = 1e9  # 1 Gt = 1e9 tCO₂
 
     for m in cdr_methods:
         name = f"{m.mainType} ({m.subType})"
 
-        sideEffect = m.sideEffect
-        sideEffectMax = m.sideEffectMax  # in Gt
-        MAC = m.mac  # €/tCO₂
-        initialCost = m.initialCost  # Euro
+        MAC = m.mac                      
+        SCC = SCC                        
+        annual_gt = m.sideEffectMax      
+        initial_cost = m.initialCost  
+        side_effect = m.sideEffect
 
-        # 1. Constraint: side effect must be non-negative
-        if sideEffect < 0:
-            print(f"{name} is not viable: side effect is negative ({sideEffect}).")
+        # --- Constraints ---
+        if side_effect < 0:
+            print(f"{name} is not viable: negative side effect ({side_effect}).")
             continue
 
-        # 2. Constraint: side-effect constrained capacity must be non-negative
-        if sideEffectMax < 0:
-            print(f"{name} is not viable: side-effect constrained capacity is negative.")
+        if annual_gt <= 0:
+            print(f"{name} is not viable: non-positive removal capacity.")
             continue
 
-        # 3. Constraint: MAC must be less than SCC
         if MAC >= SCC:
-            print(f"{name} is not viable: MAC ({MAC} €/tCO₂) >= SCC ({SCC} €/tCO₂).")
+            print(f"{name} is not viable: MAC ≥ SCC.")
             continue
 
-        # 4. Discounted total benefit calculation
-        sideEffectMax_tons = sideEffectMax * GT_TO_T
-        total_benefit = 0
+        annual_tons = annual_gt * GT_TO_T
 
-        for year_offset in range(duration_years):
-            t = (start_year + year_offset) - current_year
+        discounted_benefit = 0.0
+        discounted_cost = 0.0
+
+        for y in range(duration_years):
+            year = start_year + y
+            t = year - current_year
+
             if t < 0:
-                print(f"Warning: {name} has removals in the past (year {start_year + year_offset}). Ignoring those years.")
+                print(f"Warning: {name} has removals in the past ({year}). Skipping.")
                 continue
-            discounted_benefit = (sideEffectMax_tons * SCC) / (1 + SDR)**t
-            total_benefit += discounted_benefit
 
-        # 5. Total cost (assuming initial cost today + MAC * sideEffectMax)
-        total_cost = initialCost + (MAC * sideEffectMax_tons)
-        discounted_total_cost = total_cost / (1 + SDR)**max(0, start_year - current_year)
+            discount_factor = (1 + SDR) ** t
 
-        # 6. Viability check
-        if total_benefit >= discounted_total_cost:
-            viableMethods.append(m)
+            yearly_benefit = annual_tons * SCC
+            yearly_cost = annual_tons * MAC
+
+            discounted_benefit += yearly_benefit / discount_factor
+            discounted_cost += yearly_cost / discount_factor
+
+        # --- Initial cost ---
+        if start_year >= current_year:
+            discounted_cost += initial_cost / (1 + SDR) ** (start_year - current_year)
+        else:
+            discounted_cost += initial_cost
+
+        # --- Viability check ---
+        if discounted_benefit >= discounted_cost:
+            m.discounted_benefit = discounted_benefit
+            m.discounted_cost = discounted_cost
+            viable_methods.append(m)
         else:
             print(
-                f"{name} is not viable: total discounted benefit ({total_benefit:.2e}) "
-                f"is less than discounted total cost ({discounted_total_cost:.2e})."
+                f"{name} not viable: "
+                f"NPV benefit ({discounted_benefit:.2e}) < "
+                f"NPV cost ({discounted_cost:.2e})"
             )
 
-    return viableMethods
+    return viable_methods
+
 
 
