@@ -6,17 +6,20 @@ def read_storage_potential(excel_path="Storage_Data.xlsx"):
         # Path to this file → project root → Excel file
         project_root = Path(__file__).resolve().parent
         excel_path = project_root / "Storage_Data.xlsx"
+    
     # Read sheets
     europe_df = pd.read_excel(excel_path, sheet_name="Europe")
     northam_df = pd.read_excel(excel_path, sheet_name="NorthAm")
+    global_df = pd.read_excel(excel_path, sheet_name="Global")
 
     # Sum storage potentials
     EuropeanStoragePotential = europe_df["Potential Storage (Gt)"].sum()
     NorthAmericanStoragePotential = northam_df["Potential Storage (Gt)"].sum()
+    GlobalStoragePotential = global_df["Potential Storage (Gt)"].sum()
 
-    return EuropeanStoragePotential, NorthAmericanStoragePotential
+    return EuropeanStoragePotential, NorthAmericanStoragePotential, GlobalStoragePotential
 
-def check_storage_feasibility(removal_target, european_potential, north_american_potential):
+def check_storage_feasibility(removal_target, european_potential, north_american_potential, global_potential):
     region = removal_target["region"]
     target = removal_target["storage_target"]
 
@@ -24,6 +27,8 @@ def check_storage_feasibility(removal_target, european_potential, north_american
         available = european_potential
     elif region == "North America":
         available = north_american_potential
+    elif region == "Global":
+        available = global_potential
     else:
         raise ValueError(f"Unknown region: {region}")
 

@@ -2,7 +2,7 @@ from cdr_input import *
 #from cdr_viable import is_method_viable 
 from cdr_viable import check_storage_feasibility, read_storage_potential, is_method_viable
 from define_removal_target import define_removal_target
-from output_portfolio import *
+from output_portfolio import marginal_abatement_cost_curve, pareto_frontier_iterative
 
 def main():
     #step 0 is to define removal target
@@ -13,13 +13,14 @@ def main():
     print(f"Target type: {removal_target['target_type_name']}")
     print(f"Storage target: {removal_target['storage_target']}")
 
-    EuropeanStoragePotential, NorthAmericanStoragePotential = read_storage_potential()
+    EuropeanStoragePotential, NorthAmericanStoragePotential, GlobalStoragePotential = read_storage_potential()
 
     # Capture returned (possibly updated) value
     updated_target = check_storage_feasibility(
     removal_target,
     EuropeanStoragePotential,
-    NorthAmericanStoragePotential
+    NorthAmericanStoragePotential,
+    GlobalStoragePotential
     )
 
     # Ensure main state is updated
@@ -117,8 +118,10 @@ def main():
         pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = EuropeanStoragePotential)
     elif (region == "North America"):
         pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = NorthAmericanStoragePotential)
+    elif(region == "Global"):
+        pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = GlobalStoragePotential)
     
-
+    marginal_abatement_cost_curve(pareto_dimensions, storage_target)
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,5 @@
 def define_removal_target():
-    regions = ["Europe", "North America"]
+    regions = ["Europe", "North America", "Global"]
 
     # Select region
     while True:
