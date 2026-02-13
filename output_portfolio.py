@@ -1,6 +1,247 @@
 import os
 import matplotlib.pyplot as plt
 
+def _allocate_equal_among_front(front_methods, remaining_target, duration_years, sp, geo_used):
+
+    remaining_target = float(remaining_target)
+
+    n = len(front_methods)
+    allocations = [0.0] * n
+
+    # Compute caps per method
+    caps = []
+    for m in front_methods:
+        cap = float(m.sideEffectMax) * float(duration_years)
+
+        if getattr(m, "storageType", None) == "geological formations":
+            cap = min(cap, max(0.0, float(sp) - float(geo_used)))
+
+        caps.append(max(0.0, cap))
+
+    active = [i for i in range(n) if caps[i] > 0.0]
+
+    # Progressive equal allocation
+    while active and remaining_target > 1e-12:
+
+        share = remaining_target / len(active)
+        progressed = False
+
+        for i in active[:]:
+
+            take = min(share, caps[i])
+
+            if take > 0:
+                allocations[i] += take
+                remaining_target -= take
+                caps[i] -= take
+                progressed = True
+
+                if getattr(front_methods[i], "storageType", None) == "geological formations":
+                    geo_used += take
+
+            if caps[i] <= 1e-12:
+                active.remove(i)
+
+        if not progressed:
+            break
+
+        # Update geo caps after geo_used changed
+        for i in active:
+            if getattr(front_methods[i], "storageType", None) == "geological formations":
+                caps[i] = min(
+                    caps[i],
+                    max(0.0, float(sp) - float(geo_used))
+                )
+
+    return allocations, geo_used
+
+
+
+def _pareto_front(methods):
+    front = []
+    for m in methods:
+        dominated = False
+        for o in methods:
+            if o is m:
+                continue
+            if (o.mac <= m.mac and o.sideEffect >= m.sideEffect) and (o.mac < m.mac or o.sideEffect > m.sideEffect):
+                dominated = True
+                break
+        if not dominated:
+            front.append(m)
+    return front
+
+
+def pareto_portfolio_iterative_layers(
+    viable_methods,
+    storage_target,
+    duration_years,
+    pass_storage_potential,
+    max_rounds=10_000,
+    plot=True,
+    plot_rounds_limit=8,
+):
+
+    sp = float(pass_storage_potential)
+    geo_used = 0.0
+
+    if not viable_methods:
+        print("No viable methods provided.")
+        return []
+
+    remaining = viable_methods.copy()
+    portfolio = []
+    installed = 0.0
+    round_idx = 0
+
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+
+    round_front_snapshots = []
+
+    while remaining and installed < storage_target and round_idx < max_rounds:
+        round_idx += 1
+        front = _pareto_front(remaining)
+        if not front:
+            print("No non-dominated methods found. Stopping.")
+            break
+
+        round_front_snapshots.append({
+            "round": round_idx,
+            "front": front.copy(),
+            "remaining": remaining.copy()
+        })
+
+        print(f"\n=== Round {round_idx}: Pareto front size = {len(front)} ===")
+
+        remaining_target = float(storage_target) - installed
+
+        allocs, geo_used = _allocate_equal_among_front(
+        front_methods=front,
+        remaining_target=remaining_target,
+        duration_years=duration_years,
+        sp=sp,
+        geo_used=geo_used
+        )
+
+        for idx, m in enumerate(front):
+            actual = allocs[idx]
+            if actual <= 0:
+                remaining.remove(m)
+                continue
+            installed += actual
+            contribution = float(m.sideEffectMax) * float(duration_years)
+            partial = actual < contribution or installed >= storage_target
+            portfolio.append({
+                "method": m,
+                "actual_contribution": actual,
+                "mac": m.mac,
+                "partial": partial,
+                "round": round_idx
+            })
+            status = "PARTIAL" if partial else "FULL"
+            print(
+                f"Added {m.mainType} ({m.subType}) [{status}] | "
+                f"MAC: {m.mac} €/tCO₂ | "
+                f"Implemented: {actual:.2f} Gt | "
+                f"Cumulative: {installed:.2f} Gt"
+            )
+            remaining.remove(m)
+            if installed >= storage_target:
+                print("Storage target met.")
+                break
+    if plot:
+        plt.figure(figsize=(10, 6))
+        plt.scatter(
+            [m.mac for m in viable_methods],
+            [m.sideEffect for m in viable_methods],
+            label="All viable methods",
+            color="lightgray",
+            s=40
+        )
+        if portfolio:
+            rounds = sorted(set(e["round"] for e in portfolio))
+
+            cmap = plt.get_cmap("tab10")  # good for up to 10 rounds
+            round_colors = {r: cmap(i % 10) for i, r in enumerate(rounds)}
+
+            for r in rounds:
+                xs = [e["mac"] for e in portfolio if e["round"] == r]
+                ys = [e["method"].sideEffect for e in portfolio if e["round"] == r]
+
+                plt.scatter(
+                    xs,
+                    ys,
+                    label=f"Pareto layer {r}",
+                    color=round_colors[r],
+                    s=85,
+                    zorder=4
+                )
+
+            xs_all = [e["mac"] for e in portfolio]
+            ys_all = [e["method"].sideEffect for e in portfolio]
+    
+            ax = plt.gca()
+            ax.margins(x=0.05, y=0.08)
+
+            offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
+
+            for i, entry in enumerate(portfolio):
+
+                x = entry["mac"]
+                y = entry["method"].sideEffect
+                r = entry["round"]
+
+                label = str(r)
+                if entry["partial"]:
+                    label += " (P)"
+
+                dx, dy = offsets[i % len(offsets)]
+
+                plt.annotate(
+                    label,
+                    xy=(x, y),
+                    xytext=(dx, dy),
+                    textcoords="offset points",
+                    ha="center",
+                    va="center",
+                    fontsize=9,
+                    color=round_colors[r],
+                    bbox=dict(boxstyle="round,pad=0.2",
+                        fc="white",
+                        ec="none",
+                        alpha=0.85),
+                    zorder=6
+                )
+
+        plt.xlabel("MAC (€/tCO₂)")
+        plt.ylabel("δ(m)")
+        plt.title("Pareto Optimization Results")
+        plt.legend()
+        plt.tight_layout()
+
+        output_path = os.path.join(output_dir, "pareto_optimization_results.png")
+        plt.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close()
+
+        print(f"\nSaved final plot: {output_path}")
+
+    print("\n--- Final Pareto Portfolio ---")
+
+    for i, e in enumerate(portfolio, start=1):
+        m = e["method"]
+        status = "PARTIAL" if e["partial"] else "FULL"
+        print(
+            f"{i}. {m.mainType} ({m.subType}) [{status}] | "
+            f"MAC: {e['mac']} | "
+            f"Impl: {e['actual_contribution']:.2f} Gt | "
+            f"Round: {e['round']}"
+        )
+
+    print(f"\nTotal installed capacity: {installed:.2f} Gt in {round_idx} rounds.")
+
+    return portfolio
+
 def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, pass_storage_potential, max_iterations=1000):
     sp = pass_storage_potential
     geo_store_counter = 0
@@ -119,15 +360,37 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
          color="red", linestyle="--", marker="o",
          label="Stepwise selection")
 
-    for i in range(1, len(step_macs)):
-        plt.annotate("",
-                     xy=(step_macs[i], step_side_effects[i]),
-                     xytext=(step_macs[i-1], step_side_effects[i-1]),
-                     arrowprops=dict(arrowstyle="->", color="red", lw=1.5))
-        plt.text(step_macs[i], step_side_effects[i]+0.5, str(i+1), color="red", fontsize=9)
+    ax = plt.gca()
+    ax.margins(x=0.05, y=0.08)
+    offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
 
-    plt.xlabel("Cost per ton of CO₂ removed (€/tCO₂)")
-    plt.ylabel("Side effect")
+    for i in range(len(step_macs)):
+        dx, dy = offsets[i % len(offsets)]
+
+        plt.annotate(
+            str(i + 1),
+            xy=(step_macs[i], step_side_effects[i]),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            ha="center", va="center",
+            fontsize=9,
+            color="red",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8),
+            zorder=5
+        )
+
+    for i in range(1, len(step_macs)):
+        plt.annotate(
+            "",
+            xy=(step_macs[i], step_side_effects[i]),
+            xytext=(step_macs[i-1], step_side_effects[i-1]),
+            arrowprops=dict(arrowstyle="->", color="red", lw=1.2, alpha=0.9),
+            zorder=4
+    )
+
+    
+    plt.xlabel("MAC (€/tCO₂)")
+    plt.ylabel("δ(m)")
     plt.title("Lexicographic Optimization Results")
     plt.legend()
 
@@ -159,14 +422,11 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
         print("No Lexicographic methods provided.")
         return [], []
 
-    # Filter usable entries
     entries = [e for e in lg_methods if e["actual_contribution"] and e["actual_contribution"] > 0]
 
-    # Typical MAC curve: order by increasing MAC (and optional tie-breaker)
     if sort_by_mac:
         entries = sorted(entries, key=lambda e: (e["mac"], -e["actual_contribution"]))
 
-    # Build bin edges (x) and heights (y)
     edges = [0.0]
     heights = []
 
@@ -177,7 +437,6 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
         contrib = float(e["actual_contribution"])
         mac = float(e["mac"])
 
-        # Cap at storage_target
         remaining = storage_target - installed
         if remaining <= 0:
             break
@@ -190,7 +449,6 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
         edges.append(installed)
         heights.append(mac)
 
-        # keep a version for labels (respecting capping)
         used_entries.append({**e, "actual_contribution": contrib})
 
     if not heights:
@@ -199,11 +457,9 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
 
     plt.figure(figsize=(10, 6))
 
-    # Matplotlib has stairs (nice for MAC curves). If unavailable, we fall back to step logic.
     try:
         plt.stairs(heights, edges, fill=False)
     except AttributeError:
-        # Fallback: draw a correct post-step using duplicated points
         xs = [edges[0]]
         ys = [heights[0]]
         for i in range(len(heights)):
@@ -214,11 +470,9 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
                 ys += [heights[i+1]]
         plt.plot(xs, ys)
 
-    # Optional: markers at segment midpoints
     mids = [(edges[i] + edges[i+1]) / 2 for i in range(len(heights))]
     plt.scatter(mids, heights)
 
-    # Labels (1, 2, 3...) at midpoints, with a small vertical offset
     for i, e in enumerate(used_entries):
         label = f"{i+1}" + (" (P)" if e.get("partial") else "")
         plt.annotate(label, (mids[i], heights[i]), xytext=(0, 6), textcoords="offset points",
@@ -236,5 +490,86 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
     print(f"MAC curve saved to: {output_path}")
     print(f"Final installed capacity: {installed:.2f} Gt")
 
-    # Return cumulative endpoints and heights (common outputs)
+    return edges[1:], heights
+
+def marginal_abatement_cost_curve_pareto(portfolio, storage_target):
+ 
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    if not portfolio:
+        print("No Pareto methods provided.")
+        return [], []
+    entries = [e for e in portfolio if e["actual_contribution"] > 0]
+    edges = [0.0]
+    heights = []
+    installed = 0.0
+    used_entries = []
+
+    for e in entries:
+        contrib = float(e["actual_contribution"])
+        mac = float(e["mac"])
+        remaining = storage_target - installed
+        if remaining <= 0:
+            break
+        contrib = min(contrib, remaining)
+        if contrib <= 0:
+            continue
+        installed += contrib
+        edges.append(installed)
+        heights.append(mac)
+
+        used_entries.append({
+            **e,
+            "actual_contribution": contrib
+        })
+
+    if not heights:
+        print("Warning: No positive contributions available for MAC curve.")
+        return [], []
+
+    plt.figure(figsize=(10, 6))
+
+    try:
+        plt.stairs(heights, edges, fill=False)
+    except AttributeError:
+        xs = [edges[0]]
+        ys = [heights[0]]
+        for i in range(len(heights)):
+            xs += [edges[i+1]]
+            ys += [heights[i]]
+            if i + 1 < len(heights):
+                xs += [edges[i+1]]
+                ys += [heights[i+1]]
+        plt.plot(xs, ys)
+
+    mids = [(edges[i] + edges[i+1]) / 2 for i in range(len(heights))]
+    plt.scatter(mids, heights)
+
+    for i, e in enumerate(used_entries):
+        label = f"{i+1}"
+        if e.get("partial"):
+            label += " (P)"
+
+        plt.annotate(
+            label,
+            (mids[i], heights[i]),
+            xytext=(0, 6),
+            textcoords="offset points",
+            ha="center",
+            fontsize=9
+        )
+
+    plt.xlabel("Cumulative Storage Capacity (Gt CO₂)")
+    plt.ylabel("Marginal Abatement Cost (€/tCO₂)")
+    plt.title("Marginal Abatement Cost Curve (Pareto-Layer Order)")
+    plt.grid(True)
+    plt.tight_layout()
+
+    output_path = os.path.join(output_dir, "marginal_abatement_cost_curve_pareto.png")
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close()
+
+    print(f"MAC curve saved to: {output_path}")
+    print(f"Final installed capacity: {installed:.2f} Gt")
+
     return edges[1:], heights

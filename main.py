@@ -2,7 +2,7 @@ from cdr_input import *
 #from cdr_viable import is_method_viable 
 from cdr_viable import check_storage_feasibility, read_storage_potential, is_method_viable
 from define_removal_target import define_removal_target
-from output_portfolio import marginal_abatement_cost_curve, pareto_frontier_iterative
+from output_portfolio import *
 
 def main():
     #step 0 is to define removal target
@@ -114,14 +114,30 @@ def main():
             )
     else:
         print("\nNo CDR methods are viable under the given parameters.")
+    #first code block deals with lexicographic optimization
     if (region == "Europe"):
-        pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = EuropeanStoragePotential)
+        lg_dimensions = lexicographic_opt_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = EuropeanStoragePotential)
     elif (region == "North America"):
-        pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = NorthAmericanStoragePotential)
+        lg_dimensions = lexicographic_opt_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = NorthAmericanStoragePotential)
     elif(region == "Global"):
-        pareto_dimensions = pareto_frontier_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = GlobalStoragePotential)
-    
-    marginal_abatement_cost_curve(pareto_dimensions, storage_target)
+        lg_dimensions = lexicographic_opt_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = GlobalStoragePotential)
+    #MAC curve code block
+    if lg_dimensions:
+        marginal_abatement_cost_curve(lg_dimensions, storage_target)
+    else:
+        print("No portfolio selected, skipping MAC curve.")
+    #now pareto optimization with iterative layers
+    if (region == "Europe"):
+        pareto_dimensions = pareto_portfolio_iterative_layers(viable_methods, storage_target, duration_years, pass_storage_potential = EuropeanStoragePotential)
+    elif (region == "North America"):
+        pareto_dimensions = pareto_portfolio_iterative_layers(viable_methods, storage_target, duration_years, pass_storage_potential = NorthAmericanStoragePotential)
+    elif(region == "Global"):
+        pareto_dimensions = pareto_portfolio_iterative_layers(viable_methods, storage_target, duration_years, pass_storage_potential = GlobalStoragePotential)
+    #now pareto MACC
+    if pareto_dimensions:
+        marginal_abatement_cost_curve_pareto(pareto_dimensions, storage_target)
+    else:
+        print("No portfolio selected, skipping MAC curve.")
 
 if __name__ == "__main__":
     main()
