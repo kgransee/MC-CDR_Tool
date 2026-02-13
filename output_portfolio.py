@@ -8,7 +8,6 @@ def _allocate_equal_among_front(front_methods, remaining_target, duration_years,
     n = len(front_methods)
     allocations = [0.0] * n
 
-    # Compute caps per method
     caps = []
     for m in front_methods:
         cap = float(m.sideEffectMax) * float(duration_years)
@@ -20,7 +19,6 @@ def _allocate_equal_among_front(front_methods, remaining_target, duration_years,
 
     active = [i for i in range(n) if caps[i] > 0.0]
 
-    # Progressive equal allocation
     while active and remaining_target > 1e-12:
 
         share = remaining_target / len(active)
@@ -172,7 +170,7 @@ def pareto_portfolio_iterative_layers(
                 plt.scatter(
                     xs,
                     ys,
-                    label=f"Pareto layer {r}",
+                    label=f"Pareto selection {r}",
                     color=round_colors[r],
                     s=85,
                     zorder=4
@@ -190,29 +188,34 @@ def pareto_portfolio_iterative_layers(
 
                 x = entry["mac"]
                 y = entry["method"].sideEffect
-                r = entry["round"]
 
-                label = str(r)
-                if entry["partial"]:
+                subtype = entry["method"].subType
+
+                label = f"{subtype}"
+
+                if entry.get("partial"):
                     label += " (P)"
 
                 dx, dy = offsets[i % len(offsets)]
 
                 plt.annotate(
-                    label,
-                    xy=(x, y),
-                    xytext=(dx, dy),
-                    textcoords="offset points",
-                    ha="center",
-                    va="center",
-                    fontsize=9,
-                    color=round_colors[r],
-                    bbox=dict(boxstyle="round,pad=0.2",
-                        fc="white",
-                        ec="none",
-                        alpha=0.85),
-                    zorder=6
-                )
+                label,
+                xy=(x, y),
+                xytext=(dx, dy),
+                textcoords="offset points",
+                ha="center",
+                va="center",
+                fontsize=9,
+                color="black",
+                bbox=dict(
+                    boxstyle="round,pad=0.25",
+                    fc="white",
+                    ec="none",
+                    alpha=0.9
+                ),
+                zorder=6
+        )   
+
 
         plt.xlabel("MAC (€/tCO₂)")
         plt.ylabel("δ(m)")
@@ -364,20 +367,35 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
     ax.margins(x=0.05, y=0.08)
     offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
 
-    for i in range(len(step_macs)):
+    for i, entry in enumerate(lg_methods):
+
         dx, dy = offsets[i % len(offsets)]
 
+        subtype = entry["method"].subType
+
+        label = f"{i+1} – {subtype}"
+
+        if entry.get("partial"):
+            label += " (P)"
+
         plt.annotate(
-            str(i + 1),
-            xy=(step_macs[i], step_side_effects[i]),
+            label,
+            xy=(entry["mac"], entry["method"].sideEffect),
             xytext=(dx, dy),
             textcoords="offset points",
-            ha="center", va="center",
+            ha="center",
+            va="center",
             fontsize=9,
             color="red",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8),
+            bbox=dict(
+                boxstyle="round,pad=0.25",
+                fc="white",
+                ec="none",
+                alpha=0.9
+            ),
             zorder=5
         )
+
 
     for i in range(1, len(step_macs)):
         plt.annotate(
@@ -413,6 +431,155 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
 
     return lg_methods
 
+def marginal_abatement_cost_curve_pareto(portfolio, storage_target):
+
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+
+    if not portfolio:
+        print("No Pareto methods provided.")
+        return [], []
+
+    # Keep original implementation order
+    entries = [e for e in portfolio if e.get("actual_contribution", 0) and e["actual_contribution"] > 0]
+
+    edges = [0.0]   # x bin edges
+    heights = []    # y step heights (mac)
+    mids = []       # midpoints for markers/labels
+    used_entries = []
+
+    installed = 0.0
+
+    round_end_x = {}   # round -> cumulative installed at end of that round (capped)
+    current_round = None
+
+    for e in entries:
+        contrib = float(e["actual_contribution"])
+        mac = float(e["mac"])
+        r = e.get("round", None)
+
+        remaining = float(storage_target) - installed
+        if remaining <= 0:
+            break
+
+        contrib = min(contrib, remaining)
+        if contrib <= 0:
+            continue
+
+        x0 = edges[-1]
+        installed += contrib
+        x1 = installed
+
+        edges.append(x1)
+        heights.append(mac)
+        mids.append((x0 + x1) / 2)
+
+        used_entries.append({**e, "actual_contribution": contrib})
+
+        # record round boundary as we go
+        if r is not None:
+            current_round = r
+            round_end_x[r] = x1  # overwritten until the last method of that round => end boundary
+
+    if not heights:
+        print("Warning: No positive contributions available for MAC curve.")
+        return [], []
+
+    # ---------------- Plot ----------------
+    plt.figure(figsize=(12, 7))  # bigger = more legible
+    ax = plt.gca()
+
+    # Draw the step curve
+    try:
+        ax.stairs(heights, edges, fill=False, linewidth=2.0)
+    except AttributeError:
+        # fallback for older matplotlib
+        xs = [edges[0]]
+        ys = [heights[0]]
+        for i in range(len(heights)):
+            xs += [edges[i+1]]
+            ys += [heights[i]]
+            if i + 1 < len(heights):
+                xs += [edges[i+1]]
+                ys += [heights[i+1]]
+        ax.plot(xs, ys, linewidth=2.0)
+
+    # Markers
+    ax.scatter(mids, heights, s=55)
+
+    # Labels (keep your existing numbering, but make readable)
+    for i, e in enumerate(used_entries):
+
+        subtype = e["method"].subType  # access CDR subtype
+
+        label = f"{i+1} – {subtype}"
+
+        if e.get("partial"):
+                label += " (P)"
+
+        ax.annotate(
+            label,
+            (mids[i], heights[i]),
+            xytext=(0, 8),
+            textcoords="offset points",
+            ha="center",
+            fontsize=10,
+            bbox=dict(
+                boxstyle="round,pad=0.25",
+                fc="white",
+                ec="none",
+                alpha=0.9
+            )
+        )
+
+    # -------- Pareto layer separators (vertical lines) --------
+    # Draw a vertical line at each round end EXCEPT the final endpoint (optional)
+    # Sort by round number for consistent ordering
+    rounds_sorted = sorted(round_end_x.keys(), key=lambda x: (x if isinstance(x, (int, float)) else str(x)))
+
+    # y-limits padding
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim(ymin, ymax * 1.05)
+
+    for r in rounds_sorted:
+        x = round_end_x[r]
+        # Skip final boundary if it equals total installed (purely cosmetic)
+        if abs(x - edges[-1]) < 1e-9:
+            continue
+
+        ax.axvline(x=x, linestyle="--", linewidth=1.3, alpha=0.6)
+
+        # Optional: label the round boundary near the top
+        ax.text(
+            x,
+            ymax * 1.02,
+            f"R{r}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            rotation=0,
+            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75)
+        )
+
+    # Cosmetics / legibility
+    ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)", fontsize=12)
+    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)", fontsize=12)
+    ax.set_title("Marginal Abatement Cost Curve (Pareto Layers)", fontsize=14)
+    ax.grid(True, alpha=0.25, linewidth=1.0)
+    ax.margins(x=0.02, y=0.08)
+
+    plt.tight_layout()
+
+    output_path = os.path.join(output_dir, "marginal_abatement_cost_curve_pareto.png")
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+    print(f"MAC curve saved to: {output_path}")
+    print(f"Final installed capacity: {edges[-1]:.2f} Gt")
+
+    return edges[1:], heights
+import os
+import matplotlib.pyplot as plt
 
 def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False):
     output_dir = "output"
@@ -422,22 +589,25 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
         print("No Lexicographic methods provided.")
         return [], []
 
-    entries = [e for e in lg_methods if e["actual_contribution"] and e["actual_contribution"] > 0]
+    # Keep only positive contributions
+    entries = [e for e in lg_methods if e.get("actual_contribution", 0) > 0]
 
+    # Optional economic ordering
     if sort_by_mac:
         entries = sorted(entries, key=lambda e: (e["mac"], -e["actual_contribution"]))
 
     edges = [0.0]
     heights = []
+    mids = []
+    used_entries = []
 
     installed = 0.0
-    used_entries = []
 
     for e in entries:
         contrib = float(e["actual_contribution"])
         mac = float(e["mac"])
 
-        remaining = storage_target - installed
+        remaining = float(storage_target) - installed
         if remaining <= 0:
             break
 
@@ -445,9 +615,13 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
         if contrib <= 0:
             continue
 
+        x0 = edges[-1]
         installed += contrib
-        edges.append(installed)
+        x1 = installed
+
+        edges.append(x1)
         heights.append(mac)
+        mids.append((x0 + x1) / 2)
 
         used_entries.append({**e, "actual_contribution": contrib})
 
@@ -455,10 +629,12 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
         print("Warning: No positive contributions available for MAC curve.")
         return [], []
 
-    plt.figure(figsize=(10, 6))
+    # ---------------- Plot ----------------
+    plt.figure(figsize=(12, 7))
+    ax = plt.gca()
 
     try:
-        plt.stairs(heights, edges, fill=False)
+        ax.stairs(heights, edges, fill=False, linewidth=2.0)
     except AttributeError:
         xs = [edges[0]]
         ys = [heights[0]]
@@ -468,105 +644,38 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
             if i + 1 < len(heights):
                 xs += [edges[i+1]]
                 ys += [heights[i+1]]
-        plt.plot(xs, ys)
+        ax.plot(xs, ys, linewidth=2.0)
 
-    mids = [(edges[i] + edges[i+1]) / 2 for i in range(len(heights))]
-    plt.scatter(mids, heights)
+    ax.scatter(mids, heights, s=55)
 
+    # Labels: chronological index + subtype
     for i, e in enumerate(used_entries):
-        label = f"{i+1}" + (" (P)" if e.get("partial") else "")
-        plt.annotate(label, (mids[i], heights[i]), xytext=(0, 6), textcoords="offset points",
-                     ha="center", fontsize=9)
+        subtype = e["method"].subType
+        label = f"{i+1} – {subtype}"
 
-    plt.xlabel("Cumulative Storage Capacity (Gt CO₂)")
-    plt.ylabel("Marginal Abatement Cost (€/tCO₂)")
-    plt.title("Marginal Abatement Cost Curve for Selected CDR Portfolio")
-    plt.grid(True)
-
-    output_path = os.path.join(output_dir, "marginal_abatement_cost_curve.png")
-    plt.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close()
-
-    print(f"MAC curve saved to: {output_path}")
-    print(f"Final installed capacity: {installed:.2f} Gt")
-
-    return edges[1:], heights
-
-def marginal_abatement_cost_curve_pareto(portfolio, storage_target):
- 
-    output_dir = "output"
-    os.makedirs(output_dir, exist_ok=True)
-    if not portfolio:
-        print("No Pareto methods provided.")
-        return [], []
-    entries = [e for e in portfolio if e["actual_contribution"] > 0]
-    edges = [0.0]
-    heights = []
-    installed = 0.0
-    used_entries = []
-
-    for e in entries:
-        contrib = float(e["actual_contribution"])
-        mac = float(e["mac"])
-        remaining = storage_target - installed
-        if remaining <= 0:
-            break
-        contrib = min(contrib, remaining)
-        if contrib <= 0:
-            continue
-        installed += contrib
-        edges.append(installed)
-        heights.append(mac)
-
-        used_entries.append({
-            **e,
-            "actual_contribution": contrib
-        })
-
-    if not heights:
-        print("Warning: No positive contributions available for MAC curve.")
-        return [], []
-
-    plt.figure(figsize=(10, 6))
-
-    try:
-        plt.stairs(heights, edges, fill=False)
-    except AttributeError:
-        xs = [edges[0]]
-        ys = [heights[0]]
-        for i in range(len(heights)):
-            xs += [edges[i+1]]
-            ys += [heights[i]]
-            if i + 1 < len(heights):
-                xs += [edges[i+1]]
-                ys += [heights[i+1]]
-        plt.plot(xs, ys)
-
-    mids = [(edges[i] + edges[i+1]) / 2 for i in range(len(heights))]
-    plt.scatter(mids, heights)
-
-    for i, e in enumerate(used_entries):
-        label = f"{i+1}"
         if e.get("partial"):
             label += " (P)"
 
-        plt.annotate(
+        ax.annotate(
             label,
             (mids[i], heights[i]),
-            xytext=(0, 6),
+            xytext=(0, 8),
             textcoords="offset points",
             ha="center",
-            fontsize=9
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.9)
         )
 
-    plt.xlabel("Cumulative Storage Capacity (Gt CO₂)")
-    plt.ylabel("Marginal Abatement Cost (€/tCO₂)")
-    plt.title("Marginal Abatement Cost Curve (Pareto-Layer Order)")
-    plt.grid(True)
+    ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)", fontsize=12)
+    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)", fontsize=12)
+    ax.set_title("Marginal Abatement Cost Curve (Lexicographic Portfolio)", fontsize=14)
+    ax.grid(True, alpha=0.25)
+    ax.margins(x=0.02, y=0.08)
+
     plt.tight_layout()
 
-    output_path = os.path.join(output_dir, "marginal_abatement_cost_curve_pareto.png")
-    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    output_path = os.path.join(output_dir, "marginal_abatement_cost_curve.png")
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()
 
     print(f"MAC curve saved to: {output_path}")
