@@ -1,7 +1,7 @@
 import os
 import matplotlib.pyplot as plt
 
-def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pass_storage_potential, max_iterations=1000):
+def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, pass_storage_potential, max_iterations=1000):
     sp = pass_storage_potential
     geo_store_counter = 0
     if not viable_methods:
@@ -12,7 +12,7 @@ def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pa
     os.makedirs(output_dir, exist_ok=True)
 
     remaining_methods = viable_methods.copy()
-    pareto_methods = []
+    lg_methods = []
     installed_capacity = 0
 
     step_macs = []
@@ -22,7 +22,7 @@ def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pa
 
     while remaining_methods and installed_capacity < storage_target and iterations < max_iterations:
         iterations += 1
-        pareto_candidate = None
+        lg_canidate = None
         for m in remaining_methods:
             dominated = False
             for other in remaining_methods:
@@ -32,22 +32,22 @@ def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pa
                     dominated = True
                     break
             if not dominated:
-                pareto_candidate = m
+                lg_canidate = m
                 break
 
-        if pareto_candidate is None:
-            print("No Pareto-dominant method found. Stopping loop.")
+        if lg_canidate is None:
+            print("No lexicographic-dominant method found. Stopping loop.")
             break
 
-        contribution = pareto_candidate.sideEffectMax * duration_years
+        contribution = lg_canidate.sideEffectMax * duration_years
         actual_contribution = contribution
         partial = False
 
-        if pareto_candidate.storageType == "geological formations":
+        if lg_canidate.storageType == "geological formations":
             remaining_sp = sp - geo_store_counter
             if remaining_sp <= 0:
                 print("Geological storage potential exhausted. Method cannot be implemented.")
-                remaining_methods.remove(pareto_candidate)
+                remaining_methods.remove(lg_canidate)
                 continue
             actual_contribution = min(actual_contribution, remaining_sp)
 
@@ -63,30 +63,30 @@ def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pa
 
         installed_capacity += actual_contribution
 
-        if pareto_candidate.storageType == "geological formations":
+        if lg_canidate.storageType == "geological formations":
             geo_store_counter += actual_contribution
 
-        pareto_methods.append({
-            "method": pareto_candidate,
+        lg_methods.append({
+            "method": lg_canidate,
             "actual_contribution": actual_contribution,
-            "mac": pareto_candidate.mac,
+            "mac": lg_canidate.mac,
             "partial": partial
         })
 
         status = "PARTIAL" if partial else "FULL"
 
         print(
-            f"Iteration {iterations}: Added {pareto_candidate.mainType} "
-            f"({pareto_candidate.subType}) [{status}] | "
-            f"MAC: {pareto_candidate.mac} €/tCO₂ | "
+            f"Iteration {iterations}: Added {lg_canidate.mainType} "
+            f"({lg_canidate.subType}) [{status}] | "
+            f"MAC: {lg_canidate.mac} €/tCO₂ | "
             f"Contribution: {actual_contribution:.2f} Gt | "
             f"Cumulative capacity: {installed_capacity:.2f} Gt"
         )
 
-        step_macs.append(pareto_candidate.mac)
-        step_side_effects.append(pareto_candidate.sideEffect)
+        step_macs.append(lg_canidate.mac)
+        step_side_effects.append(lg_canidate.sideEffect)
 
-        remaining_methods.remove(pareto_candidate)
+        remaining_methods.remove(lg_canidate)
 
         if installed_capacity >= storage_target:
             print("Storage target met. Stopping selection.")
@@ -102,18 +102,18 @@ def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pa
     plt.scatter([m.mac for m in viable_methods], [m.sideEffect for m in viable_methods],
                 label="All viable methods", color="lightgray")
 
-    selected_objects = [entry["method"] for entry in pareto_methods]
+    selected_objects = [entry["method"] for entry in lg_methods]
     unused_methods = [m for m in viable_methods if m not in selected_objects]
     if unused_methods:
         plt.scatter([m.mac for m in unused_methods], [m.sideEffect for m in unused_methods],
                     label="Viable but not selected", color="orange", s=60)
 
-    plt.scatter([entry["mac"] for entry in pareto_methods],
-            [entry["method"].sideEffect for entry in pareto_methods],
-            label="Pareto frontier", color="blue", s=80)
+    plt.scatter([entry["mac"] for entry in lg_methods],
+            [entry["method"].sideEffect for entry in lg_methods],
+            label="Lexicographic selection", color="blue", s=80)
 
-    step_macs = [entry["mac"] for entry in pareto_methods]
-    step_side_effects = [entry["method"].sideEffect for entry in pareto_methods]
+    step_macs = [entry["mac"] for entry in lg_methods]
+    step_side_effects = [entry["method"].sideEffect for entry in lg_methods]
 
     plt.plot(step_macs, step_side_effects,
          color="red", linestyle="--", marker="o",
@@ -128,16 +128,15 @@ def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pa
 
     plt.xlabel("Cost per ton of CO₂ removed (€/tCO₂)")
     plt.ylabel("Side effect")
-    plt.title("Lexicographic Optimization Results - Stepwise Pareto Frontier")
+    plt.title("Lexicographic Optimization Results")
     plt.legend()
 
-    output_path = os.path.join(output_dir, "lexicographic_opt_pareto_frontier.png")
+    output_path = os.path.join(output_dir, "lexicographic_opt.png")
     plt.savefig(output_path)
     plt.close()
 
-    # ---- Console output ----
-    print("\n--- Final Pareto-Optimal Portfolio ---")
-    for entry in pareto_methods:
+    print("\n--- Final Lexicographic-Optimal Portfolio ---")
+    for entry in lg_methods:
         m = entry["method"]
         print(
             f"{m.mainType} ({m.subType}) | "
@@ -146,66 +145,84 @@ def pareto_frontier_iterative(viable_methods, storage_target, duration_years, pa
             f"Side effect: {m.sideEffect}"
         )
 
-    print(f"\nLexicographic Stepwise Pareto frontier plot saved to: {output_path}")
+    print(f"\nLexicographic Optimization plot saved to: {output_path}")
     print(f"Total installed capacity: {installed_capacity:.2f} Gt after {iterations} iterations.")
 
-    return pareto_methods
-
-import os
-import matplotlib.pyplot as plt
+    return lg_methods
 
 
-def marginal_abatement_cost_curve(pareto_methods, storage_target):
+def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False):
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
-    
-    if not pareto_methods:
-        print("No Pareto methods provided.")
+
+    if not lg_methods:
+        print("No Lexicographic methods provided.")
         return [], []
 
-    os.makedirs(output_dir, exist_ok=True)
+    # Filter usable entries
+    entries = [e for e in lg_methods if e["actual_contribution"] and e["actual_contribution"] > 0]
 
-    cumulative_storage = []
-    mac_values = []
+    # Typical MAC curve: order by increasing MAC (and optional tie-breaker)
+    if sort_by_mac:
+        entries = sorted(entries, key=lambda e: (e["mac"], -e["actual_contribution"]))
 
-    installed_capacity = 0
+    # Build bin edges (x) and heights (y)
+    edges = [0.0]
+    heights = []
 
-    for entry in pareto_methods:
+    installed = 0.0
+    used_entries = []
 
-        contribution = entry["actual_contribution"]
-        mac = entry["mac"]
+    for e in entries:
+        contrib = float(e["actual_contribution"])
+        mac = float(e["mac"])
 
-        if contribution <= 0:
+        # Cap at storage_target
+        remaining = storage_target - installed
+        if remaining <= 0:
+            break
+
+        contrib = min(contrib, remaining)
+        if contrib <= 0:
             continue
 
-        installed_capacity += contribution
-        cumulative_storage.append(installed_capacity)
-        mac_values.append(mac)
+        installed += contrib
+        edges.append(installed)
+        heights.append(mac)
 
-        if installed_capacity >= storage_target:
-            break
+        # keep a version for labels (respecting capping)
+        used_entries.append({**e, "actual_contribution": contrib})
+
+    if not heights:
+        print("Warning: No positive contributions available for MAC curve.")
+        return [], []
 
     plt.figure(figsize=(10, 6))
 
-    if mac_values:
-        x_values = [0] + cumulative_storage
-        y_values = [mac_values[0]] + mac_values
-        plt.step(x_values, y_values, where='post')
-        plt.scatter(cumulative_storage, mac_values)
+    # Matplotlib has stairs (nice for MAC curves). If unavailable, we fall back to step logic.
+    try:
+        plt.stairs(heights, edges, fill=False)
+    except AttributeError:
+        # Fallback: draw a correct post-step using duplicated points
+        xs = [edges[0]]
+        ys = [heights[0]]
+        for i in range(len(heights)):
+            xs += [edges[i+1]]
+            ys += [heights[i]]
+            if i + 1 < len(heights):
+                xs += [edges[i+1]]
+                ys += [heights[i+1]]
+        plt.plot(xs, ys)
 
-        for i, entry in enumerate(pareto_methods[:len(cumulative_storage)]):
-            label = f"{i+1}"
-            if entry["partial"]:
-                label += " (P)"
-            plt.text(
-                cumulative_storage[i],
-                mac_values[i],
-                label,
-                fontsize=9
-            )
+    # Optional: markers at segment midpoints
+    mids = [(edges[i] + edges[i+1]) / 2 for i in range(len(heights))]
+    plt.scatter(mids, heights)
 
-    else:
-        print("Warning: No positive contributions available for MAC curve.")
+    # Labels (1, 2, 3...) at midpoints, with a small vertical offset
+    for i, e in enumerate(used_entries):
+        label = f"{i+1}" + (" (P)" if e.get("partial") else "")
+        plt.annotate(label, (mids[i], heights[i]), xytext=(0, 6), textcoords="offset points",
+                     ha="center", fontsize=9)
 
     plt.xlabel("Cumulative Storage Capacity (Gt CO₂)")
     plt.ylabel("Marginal Abatement Cost (€/tCO₂)")
@@ -213,10 +230,11 @@ def marginal_abatement_cost_curve(pareto_methods, storage_target):
     plt.grid(True)
 
     output_path = os.path.join(output_dir, "marginal_abatement_cost_curve.png")
-    plt.savefig(output_path)
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close()
 
     print(f"MAC curve saved to: {output_path}")
-    print(f"Final installed capacity: {installed_capacity:.2f} Gt")
+    print(f"Final installed capacity: {installed:.2f} Gt")
 
-    return cumulative_storage, mac_values
+    # Return cumulative endpoints and heights (common outputs)
+    return edges[1:], heights
