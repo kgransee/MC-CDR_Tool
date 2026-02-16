@@ -1,5 +1,7 @@
 import os
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 
 def _allocate_equal_among_front(front_methods, remaining_target, duration_years, sp, geo_used):
 
@@ -52,8 +54,6 @@ def _allocate_equal_among_front(front_methods, remaining_target, duration_years,
                 )
 
     return allocations, geo_used
-
-
 
 def _pareto_front(methods):
     front = []
@@ -148,86 +148,101 @@ def pareto_portfolio_iterative_layers(
             if installed >= storage_target:
                 print("Storage target met.")
                 break
-    if plot:
-        plt.figure(figsize=(10, 6))
-        plt.scatter(
-            [m.mac for m in viable_methods],
-            [m.sideEffect for m in viable_methods],
-            label="All viable methods",
-            color="lightgray",
-            s=40
-        )
-        if portfolio:
-            rounds = sorted(set(e["round"] for e in portfolio))
+        if plot:
+            plt.figure(figsize=(10, 6))
+            ax = plt.gca()
 
-            cmap = plt.get_cmap("tab10")  # good for up to 10 rounds
-            round_colors = {r: cmap(i % 10) for i, r in enumerate(rounds)}
+            # Ensure these always exist
+            selected_set = set()
+            unused_methods = viable_methods.copy()
 
-            for r in rounds:
-                xs = [e["mac"] for e in portfolio if e["round"] == r]
-                ys = [e["method"].sideEffect for e in portfolio if e["round"] == r]
+            # --- Selected (portfolio) colored by round ---
+            if portfolio:
+                rounds = sorted({e["round"] for e in portfolio})
+                cmap = plt.get_cmap("tab10")
+                round_colors = {r: cmap(i % 10) for i, r in enumerate(rounds)}
 
-                plt.scatter(
-                    xs,
-                    ys,
-                    label=f"Pareto selection {r}",
-                    color=round_colors[r],
-                    s=85,
-                    zorder=4
+                for r in rounds:
+                    xs = [e["mac"] for e in portfolio if e["round"] == r]
+                    ys = [e["method"].sideEffect for e in portfolio if e["round"] == r]
+                    ax.scatter(xs, ys, label=f"Pareto selection {r}", color=round_colors[r], s=85, zorder=4)
+
+                # labels for selected points
+                offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
+                for i, entry in enumerate(portfolio):
+                    x = entry["mac"]
+                    y = entry["method"].sideEffect
+                    label = f"{entry['method'].subType}"
+                    dx, dy = offsets[i % len(offsets)]
+
+                    ax.annotate(
+                            label,
+                        xy=(x, y),
+                        xytext=(dx, dy),
+                        textcoords="offset points",
+                        ha="center",
+                        va="center",
+                        fontsize=9,
+                        color="black",
+                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.9),
+                        zorder=6
+                    )
+
+                def _mkey(m):
+                    return (getattr(m, "mainType", None), getattr(m, "subType", None))
+
+                selected_keys = {_mkey(e["method"]) for e in portfolio}
+                unused_methods = [m for m in viable_methods if _mkey(m) not in selected_keys]
+
+            if unused_methods:
+                ax.scatter(
+                    [m.mac for m in unused_methods],
+                    [m.sideEffect for m in unused_methods],
+                    label="Viable but not selected",
+                    color="red",
+                    s=60,
+                    zorder=3
                 )
 
-            xs_all = [e["mac"] for e in portfolio]
-            ys_all = [e["method"].sideEffect for e in portfolio]
-    
-            ax = plt.gca()
-            ax.margins(x=0.05, y=0.08)
+                for m in unused_methods:
+                    ax.annotate(
+                        f"{m.subType}",
+                        xy=(m.mac, m.sideEffect),
+                        xytext=(6, 6),
+                        textcoords="offset points",
+                        ha="left",
+                        va="bottom",
+                        fontsize=9,
+                        color="black",
+                        bbox=dict(boxstyle="round,pad=0.2", fc="none", ec="none", alpha=0.85),
+                        zorder=5
+                    )
 
-            offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
+             # --- Proper limits that include scatter collections ---
+            xs_all = [float(m.mac) for m in viable_methods]
+            ys_all = [float(m.sideEffect) for m in viable_methods]
 
-            for i, entry in enumerate(portfolio):
+            # Fallback in case list is empty (shouldn't happen)
+            xmax = max(xs_all) if xs_all else 1.0
+            ymax = max(ys_all) if ys_all else 1.0
 
-                x = entry["mac"]
-                y = entry["method"].sideEffect
+            pad_x = 0.05 * xmax if xmax > 0 else 1.0
+            pad_y = 0.08 * ymax if ymax > 0 else 1.0
 
-                subtype = entry["method"].subType
+            ax.set_xlim(0, xmax + pad_x)
+            ax.set_ylim(0, ymax + pad_y)
 
-                label = f"{subtype}"
+            plt.xlabel("MAC (€/tCO₂)")
+            plt.ylabel("δ(m)")
+            plt.title("Pareto Optimization Results")
+            plt.legend()
+            plt.tight_layout()
 
-                if entry.get("partial"):
-                    label += " (P)"
+            output_path = os.path.join(output_dir, "pareto_optimization_results.png")
+            plt.savefig(output_path, dpi=200, bbox_inches="tight")
+            plt.close()
 
-                dx, dy = offsets[i % len(offsets)]
-
-                plt.annotate(
-                label,
-                xy=(x, y),
-                xytext=(dx, dy),
-                textcoords="offset points",
-                ha="center",
-                va="center",
-                fontsize=9,
-                color="black",
-                bbox=dict(
-                    boxstyle="round,pad=0.25",
-                    fc="white",
-                    ec="none",
-                    alpha=0.9
-                ),
-                zorder=6
-        )   
-
-
-        plt.xlabel("MAC (€/tCO₂)")
-        plt.ylabel("δ(m)")
-        plt.title("Pareto Optimization Results")
-        plt.legend()
-        plt.tight_layout()
-
-        output_path = os.path.join(output_dir, "pareto_optimization_results.png")
-        plt.savefig(output_path, dpi=200, bbox_inches="tight")
-        plt.close()
-
-        print(f"\nSaved final plot: {output_path}")
+            print(f"\nSaved final plot: {output_path}")
 
     print("\n--- Final Pareto Portfolio ---")
 
@@ -342,29 +357,44 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
 
 
     plt.figure(figsize=(10, 6))
+    ax = plt.gca()
+    def _mkey(m):
+        return (getattr(m, "mainType", None), getattr(m, "subType", None))
 
-    plt.scatter([m.mac for m in viable_methods], [m.sideEffect for m in viable_methods],
-                label="All viable methods", color="lightgray")
+    selected_keys = {_mkey(e["method"]) for e in lg_methods}
+    unused_methods = [m for m in viable_methods if _mkey(m) not in selected_keys]
 
-    selected_objects = [entry["method"] for entry in lg_methods]
-    unused_methods = [m for m in viable_methods if m not in selected_objects]
     if unused_methods:
-        plt.scatter([m.mac for m in unused_methods], [m.sideEffect for m in unused_methods],
-                    label="Viable but not selected", color="orange", s=60)
+        ax.scatter(
+            [m.mac for m in unused_methods],
+            [m.sideEffect for m in unused_methods],
+            label="Viable but not selected",
+            color="red",
+            s=60,
+            zorder=2
+        )
 
-    plt.scatter([entry["mac"] for entry in lg_methods],
-            [entry["method"].sideEffect for entry in lg_methods],
-            label="Lexicographic selection", color="blue", s=80)
+        for m in unused_methods:
+            ax.annotate(
+                f"{m.subType}",
+                xy=(m.mac, m.sideEffect),
+                xytext=(6, 6),
+                textcoords="offset points",
+                ha="left",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85),
+                zorder=3
+            )
 
     step_macs = [entry["mac"] for entry in lg_methods]
     step_side_effects = [entry["method"].sideEffect for entry in lg_methods]
 
     plt.plot(step_macs, step_side_effects,
-         color="red", linestyle="--", marker="o",
-         label="Stepwise selection")
+         color="black", marker="o",
+         label="Lexicographic selection")
 
-    ax = plt.gca()
-    ax.margins(x=0.05, y=0.08)
     offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
 
     for i, entry in enumerate(lg_methods):
@@ -373,10 +403,9 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
 
         subtype = entry["method"].subType
 
-        label = f"{i+1} – {subtype}"
+        label = f"{subtype}"
 
-        if entry.get("partial"):
-            label += " (P)"
+        
 
         plt.annotate(
             label,
@@ -386,10 +415,10 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
             ha="center",
             va="center",
             fontsize=9,
-            color="red",
+            color="black",
             bbox=dict(
                 boxstyle="round,pad=0.25",
-                fc="white",
+                fc="none",
                 ec="none",
                 alpha=0.9
             ),
@@ -402,10 +431,23 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
             "",
             xy=(step_macs[i], step_side_effects[i]),
             xytext=(step_macs[i-1], step_side_effects[i-1]),
-            arrowprops=dict(arrowstyle="->", color="red", lw=1.2, alpha=0.9),
+            arrowprops=dict(arrowstyle="-|>", color="black", lw=1.2, alpha=0.9, mutation_scale=15),
             zorder=4
-    )
 
+    )
+    # --- Proper limits that include scatter collections ---
+    xs_all = [float(m.mac) for m in viable_methods]
+    ys_all = [float(m.sideEffect) for m in viable_methods]
+
+    # Fallback in case list is empty (shouldn't happen)
+    xmax = max(xs_all) if xs_all else 1.0
+    ymax = max(ys_all) if ys_all else 1.0
+
+    pad_x = 0.05 * xmax if xmax > 0 else 1.0
+    pad_y = 0.08 * ymax if ymax > 0 else 1.0
+
+    ax.set_xlim(0, xmax + pad_x)
+    ax.set_ylim(0, ymax + pad_y)
     
     plt.xlabel("MAC (€/tCO₂)")
     plt.ylabel("δ(m)")
@@ -431,7 +473,7 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
 
     return lg_methods
 
-def marginal_abatement_cost_curve_pareto(portfolio, storage_target):
+def marginal_abatement_cost_curve_pareto(portfolio, storage_target, start_year, duration_years, SDR, current_year):
 
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
@@ -484,90 +526,95 @@ def marginal_abatement_cost_curve_pareto(portfolio, storage_target):
     if not heights:
         print("Warning: No positive contributions available for MAC curve.")
         return [], []
+    r = float(SDR) / 100.0
+    start_offset = start_year - current_year
+    total_cost_eur = 0.0
 
-    # ---------------- Plot ----------------
-    plt.figure(figsize=(12, 7))  # bigger = more legible
+    for e in used_entries:
+        mac = float(e["mac"])
+        q_gt = float(e["actual_contribution"])
+        total_cost_eur += mac * q_gt * 1e9  # Gt → t
+
+    # Spread cost evenly over duration
+    annual_cost = total_cost_eur / duration_years
+
+    discounted_cost = 0.0
+    for t in range(duration_years):
+        k = start_offset + t
+        discounted_cost += annual_cost / ((1 + r) ** k)
+
+    print(f"\nUndiscounted cost: {total_cost_eur:,.2e} €")
+    print(f"Present Value cost of Pareto optimal portfolio: {discounted_cost:,.2e} €")
+    
+
+    # Plotting
+    plt.figure(figsize=(12, 7))
     ax = plt.gca()
 
-    # Draw the step curve
-    try:
-        ax.stairs(heights, edges, fill=False, linewidth=2.0)
-    except AttributeError:
-        # fallback for older matplotlib
-        xs = [edges[0]]
-        ys = [heights[0]]
-        for i in range(len(heights)):
-            xs += [edges[i+1]]
-            ys += [heights[i]]
-            if i + 1 < len(heights):
-                xs += [edges[i+1]]
-                ys += [heights[i+1]]
-        ax.plot(xs, ys, linewidth=2.0)
+    #color coding
+    rounds_sorted = sorted(round_end_x.keys())
+    cmap = plt.get_cmap("tab10")
+    round_colors = {r: cmap(i % 10) for i, r in enumerate(rounds_sorted)}
 
-    # Markers
-    ax.scatter(mids, heights, s=55)
-
-    # Labels (keep your existing numbering, but make readable)
+    #colored segments
     for i, e in enumerate(used_entries):
+        r = e["round"]
+        color = round_colors[r]
 
-        subtype = e["method"].subType  # access CDR subtype
+        x0 = edges[i]
+        x1 = edges[i + 1]
+        y = heights[i]
 
-        label = f"{i+1} – {subtype}"
+        # Horizontal segment
+        ax.plot([x0, x1], [y, y], color=color, linewidth=2.5)
 
-        if e.get("partial"):
-                label += " (P)"
-
+        # Vertical jump
+        if i > 0:
+            ax.plot([x0, x0], [heights[i - 1], y], color=color, linewidth=2.0)
+        subtype = e["method"].subType
+        label = f"{subtype}"
         ax.annotate(
             label,
-            (mids[i], heights[i]),
+            xy=(mids[i], y),
             xytext=(0, 8),
             textcoords="offset points",
             ha="center",
             fontsize=10,
             bbox=dict(
                 boxstyle="round,pad=0.25",
-                fc="white",
+                fc="none",
                 ec="none",
                 alpha=0.9
-            )
+            ),
+            zorder=6
         )
 
-    # -------- Pareto layer separators (vertical lines) --------
-    # Draw a vertical line at each round end EXCEPT the final endpoint (optional)
-    # Sort by round number for consistent ordering
-    rounds_sorted = sorted(round_end_x.keys(), key=lambda x: (x if isinstance(x, (int, float)) else str(x)))
-
-    # y-limits padding
-    ymin, ymax = ax.get_ylim()
-    ax.set_ylim(ymin, ymax * 1.05)
-
+    ax.scatter(mids, heights, s=60, zorder=5, color="black")
     for r in rounds_sorted:
         x = round_end_x[r]
-        # Skip final boundary if it equals total installed (purely cosmetic)
-        if abs(x - edges[-1]) < 1e-9:
-            continue
-
-        ax.axvline(x=x, linestyle="--", linewidth=1.3, alpha=0.6)
-
-        # Optional: label the round boundary near the top
-        ax.text(
-            x,
-            ymax * 1.02,
-            f"R{r}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            rotation=0,
-            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75)
+        ax.axvline(
+            x=x,
+            linestyle="--",
+            linewidth=1.3,
+            color=round_colors[r],
+            alpha=0.7
         )
+    ax.relim()
+    ax.autoscale_view()
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
 
-    # Cosmetics / legibility
     ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)", fontsize=12)
     ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)", fontsize=12)
-    ax.set_title("Marginal Abatement Cost Curve (Pareto Layers)", fontsize=14)
-    ax.grid(True, alpha=0.25, linewidth=1.0)
-    ax.margins(x=0.02, y=0.08)
+    ax.set_title("MACC: Pareto Optimized Portfolio", fontsize=14)
+    ax.grid(True, alpha=0.25)
+    # ---- Legend ----
+    legend_elements = [
+    Line2D([0], [0], color=round_colors[r], lw=3, label=f"Pareto level {r}")
+        for r in rounds_sorted
+    ]
 
+    ax.legend(handles=legend_elements, title="Pareto Levels")
     plt.tight_layout()
 
     output_path = os.path.join(output_dir, "marginal_abatement_cost_curve_pareto.png")
@@ -578,10 +625,8 @@ def marginal_abatement_cost_curve_pareto(portfolio, storage_target):
     print(f"Final installed capacity: {edges[-1]:.2f} Gt")
 
     return edges[1:], heights
-import os
-import matplotlib.pyplot as plt
 
-def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False):
+def marginal_abatement_cost_curve(lg_methods, storage_target, start_year, duration_years, SDR, current_year):
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
 
@@ -593,8 +638,6 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
     entries = [e for e in lg_methods if e.get("actual_contribution", 0) > 0]
 
     # Optional economic ordering
-    if sort_by_mac:
-        entries = sorted(entries, key=lambda e: (e["mac"], -e["actual_contribution"]))
 
     edges = [0.0]
     heights = []
@@ -628,33 +671,53 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
     if not heights:
         print("Warning: No positive contributions available for MAC curve.")
         return [], []
+    #present value costs of portfolio
+    r = float(SDR) / 100.0
+    start_offset = start_year - current_year
+    total_cost_eur = 0.0
 
-    # ---------------- Plot ----------------
+    for e in used_entries:
+        mac = float(e["mac"])
+        q_gt = float(e["actual_contribution"])
+        total_cost_eur += mac * q_gt * 1e9  # Gt → t
+
+    # Spread cost evenly over duration
+    annual_cost = total_cost_eur / duration_years
+
+    discounted_cost = 0.0
+    for t in range(duration_years):
+        k = start_offset + t
+        discounted_cost += annual_cost / ((1 + r) ** k)
+
+    print(f"\nUndiscounted cost: {total_cost_eur:,.2e} €")
+    print(f"Present Value cost of Lexicographic portfolio: {discounted_cost:,.2e} €")
+    
+    #Plot
     plt.figure(figsize=(12, 7))
     ax = plt.gca()
 
-    try:
-        ax.stairs(heights, edges, fill=False, linewidth=2.0)
-    except AttributeError:
-        xs = [edges[0]]
-        ys = [heights[0]]
-        for i in range(len(heights)):
-            xs += [edges[i+1]]
-            ys += [heights[i]]
-            if i + 1 < len(heights):
-                xs += [edges[i+1]]
-                ys += [heights[i+1]]
-        ax.plot(xs, ys, linewidth=2.0)
+    #stepwise
+    xs = [0]
+    ys = [heights[0]]
 
-    ax.scatter(mids, heights, s=55)
+    for i in range(len(heights)):
+        #horizontal segment
+        xs.append(edges[i + 1])
+        ys.append(heights[i])
+        #vertical jumps
+        if i + 1 < len(heights):
+            xs.append(edges[i + 1])
+            ys.append(heights[i + 1])
 
-    # Labels: chronological index + subtype
+    ax.plot(xs, ys, linewidth=2.2)
+
+    #Midpoints
+    ax.scatter(mids, heights, s=55, zorder=5)
+
+    #Labels
     for i, e in enumerate(used_entries):
         subtype = e["method"].subType
-        label = f"{i+1} – {subtype}"
-
-        if e.get("partial"):
-            label += " (P)"
+        label = f"{subtype}"
 
         ax.annotate(
             label,
@@ -666,11 +729,13 @@ def marginal_abatement_cost_curve(lg_methods, storage_target, sort_by_mac=False)
             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.9)
         )
 
-    ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)", fontsize=12)
-    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)", fontsize=12)
-    ax.set_title("Marginal Abatement Cost Curve (Lexicographic Portfolio)", fontsize=14)
+    #Formatting
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
+    ax.margins(x=0)
+    ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
+    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)")
     ax.grid(True, alpha=0.25)
-    ax.margins(x=0.02, y=0.08)
 
     plt.tight_layout()
 

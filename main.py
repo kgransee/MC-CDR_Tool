@@ -123,7 +123,7 @@ def main():
         lg_dimensions = lexicographic_opt_iterative(viable_methods,storage_target,duration_years, pass_storage_potential = GlobalStoragePotential)
     #MAC curve code block
     if lg_dimensions:
-        marginal_abatement_cost_curve(lg_dimensions, storage_target)
+        marginal_abatement_cost_curve(lg_dimensions, storage_target, start_year, duration_years, SDR, current_year)
     else:
         print("No portfolio selected, skipping MAC curve.")
     #now pareto optimization with iterative layers
@@ -135,7 +135,7 @@ def main():
         pareto_dimensions = pareto_portfolio_iterative_layers(viable_methods, storage_target, duration_years, pass_storage_potential = GlobalStoragePotential)
     #now pareto MACC
     if pareto_dimensions:
-        marginal_abatement_cost_curve_pareto(pareto_dimensions, storage_target)
+        marginal_abatement_cost_curve_pareto(pareto_dimensions, storage_target, start_year, duration_years, SDR, current_year)
     else:
         print("No portfolio selected, skipping MAC curve.")
 

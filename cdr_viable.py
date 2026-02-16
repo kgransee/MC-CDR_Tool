@@ -95,8 +95,8 @@ def is_method_viable(cdr_methods, SCC, SDR, start_year, duration_years, current_
             if t < 0:
                 print(f"Warning: {name} has removals in the past ({year}). Skipping.")
                 continue
-
-            discount_factor = (1 + SDR) ** t
+            r = float(SDR) / 100.0
+            discount_factor = (1 + r) ** t
 
             yearly_benefit = annual_tons * SCC
             yearly_cost = annual_tons * MAC
@@ -104,13 +104,12 @@ def is_method_viable(cdr_methods, SCC, SDR, start_year, duration_years, current_
             discounted_benefit += yearly_benefit / discount_factor
             discounted_cost += yearly_cost / discount_factor
 
-        # --- Initial cost ---
-        if start_year >= current_year:
-            discounted_cost += initial_cost / (1 + SDR) ** (start_year - current_year)
-        else:
+            #initial cost is added at the start year (t=0), so no discounting needed
             discounted_cost += initial_cost
 
-        # --- Viability check ---
+        # Viability check: NPV benefit must be ≥ NPV cost
+        #this presents the theoretical implemetnation, but it may result that actual implemenation is less than
+        #the amount needed to cover the inital costs
         if discounted_benefit >= discounted_cost:
             m.discounted_benefit = discounted_benefit
             m.discounted_cost = discounted_cost
