@@ -8,13 +8,13 @@ class CDRMethod:
     maxRemove: float
     initialCost: float
     storageType: str
-    sideEffect: str
+    sideEffect: float
     sideEffectMax: float = field(repr=False)
 
     def __post_init__(self):
         possibleMethods = [
-            "LULUCF", "SCS", "BC", "BECCS", "DACCS",
-            "EW", "PWR", "BCM", "OAE", "OF"
+            "AR", "SCS", "Biochar", "BECCS", "DACCS",
+            "ERW", "PWR", "BC", "OAE", "OF"
         ]
 
         if self.mainType not in possibleMethods:

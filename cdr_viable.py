@@ -41,7 +41,7 @@ def check_storage_feasibility(removal_target, european_potential, north_american
         return target
     else:
         print("Storage target exceeds regional storage potential.")
-
+        #user must enter a new target that is in line with the sustainable storage estimate
         while True:
             try:
                 new_target = float(
@@ -59,7 +59,7 @@ def check_storage_feasibility(removal_target, european_potential, north_american
 def is_method_viable(cdr_methods, SCC, SDR, start_year, duration_years, current_year):
 
     viable_methods = []
-    GT_TO_T = 1e9  # 1 Gt = 1e9 tCO₂
+    GT_TO_T = 1e9  #conversion factor from gigatons to tons
 
     for m in cdr_methods:
         name = f"{m.mainType} ({m.subType})"
@@ -67,27 +67,29 @@ def is_method_viable(cdr_methods, SCC, SDR, start_year, duration_years, current_
         MAC = m.mac                      
         SCC = SCC                        
         annual_gt = m.sideEffectMax      
-        initial_cost = m.initialCost  
+        #initial_cost = m.initialCost       initial cost is not included due to the lack of data
         side_effect = m.sideEffect
 
-        # --- Constraints ---
+        #constriants for viability
+        #first one makes sure that the expected side effect is not negative
         if side_effect < 0:
             print(f"{name} is not viable: negative side effect ({side_effect}).")
             continue
-
+        #redundant, but makes sure that positive removals exist
         if annual_gt <= 0:
             print(f"{name} is not viable: non-positive removal capacity.")
             continue
-
+        #economic viability check based on the MAC and SCC, if the cost per ton is higher than the social benefit per ton, then the method is not viable
+        #this puts dependence on the evaluation of the SCC, a potential low evaluation would then make less methods viable
         if MAC >= SCC:
             print(f"{name} is not viable: MAC ≥ SCC.")
             continue
 
         annual_tons = annual_gt * GT_TO_T
 
-        discounted_benefit = 0.0
-        discounted_cost = 0.0
-
+        initial_discounted_benefit = 0.0
+        initial_discounted_cost = 0.0
+        #calculate discounted benefit over the activity period, 
         for y in range(duration_years):
             year = start_year + y
             t = year - current_year
@@ -97,28 +99,29 @@ def is_method_viable(cdr_methods, SCC, SDR, start_year, duration_years, current_
                 continue
             r = float(SDR) / 100.0
             discount_factor = (1 + r) ** t
-
+            #annual tons assumption made, based on requirment that activity period requires  estimates of total carbon removals
             yearly_benefit = annual_tons * SCC
             yearly_cost = annual_tons * MAC
 
-            discounted_benefit += yearly_benefit / discount_factor
-            discounted_cost += yearly_cost / discount_factor
+            initial_discounted_benefit += yearly_benefit / discount_factor
+            initial_discounted_cost += yearly_cost / discount_factor
 
             #initial cost is added at the start year (t=0), so no discounting needed
-            discounted_cost += initial_cost
+            #initial_discounted_cost += initial_cost
 
-        # Viability check: NPV benefit must be ≥ NPV cost
+        # Economic feasibility check:
         #this presents the theoretical implemetnation, but it may result that actual implemenation is less than
-        #the amount needed to cover the inital costs
-        if discounted_benefit >= discounted_cost:
-            m.discounted_benefit = discounted_benefit
-            m.discounted_cost = discounted_cost
+        #the absence of initial costs is problematic in the inital activity period, 
+        #but the initial costs may be subsid\ized in some way or matter in which the received benefits may compensate over time
+        if initial_discounted_benefit >= initial_discounted_cost:
+            m.initial_discounted_benefit = initial_discounted_benefit
+            m.initial_discounted_cost = initial_discounted_cost
             viable_methods.append(m)
         else:
             print(
                 f"{name} not viable: "
-                f"NPV benefit ({discounted_benefit:.2e}) < "
-                f"NPV cost ({discounted_cost:.2e})"
+                f"NPV benefit ({m.initial_discounted_benefit:.2e}) < "
+                f"NPV cost ({m.initial_discounted_cost:.2e})"
             )
 
     return viable_methods

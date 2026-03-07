@@ -3,57 +3,38 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator
 
-def _allocate_equal_among_front(front_methods, remaining_target, duration_years, sp, geo_used):
+def _allocate_by_increasing_mac(front_methods, remaining_target, duration_years, sp, geo_used):
 
     remaining_target = float(remaining_target)
 
-    n = len(front_methods)
+    # Sort by increasing MAC
+    sorted_front = sorted(front_methods, key=lambda m: float(m.mac))
+
+    n = len(sorted_front)
     allocations = [0.0] * n
 
-    caps = []
-    for m in front_methods:
+    for i, m in enumerate(sorted_front):
+        if remaining_target <= 1e-12:
+            break
+
         cap = float(m.sideEffectMax) * float(duration_years)
 
+        # Apply geological potential constraint (dynamic because geo_used changes)
         if getattr(m, "storageType", None) == "geological formations":
             cap = min(cap, max(0.0, float(sp) - float(geo_used)))
 
-        caps.append(max(0.0, cap))
+        cap = max(0.0, cap)
+        if cap <= 1e-12:
+            continue
 
-    active = [i for i in range(n) if caps[i] > 0.0]
+        take = min(cap, remaining_target)
+        allocations[i] = take
+        remaining_target -= take
 
-    while active and remaining_target > 1e-12:
+        if getattr(m, "storageType", None) == "geological formations":
+            geo_used += take
 
-        share = remaining_target / len(active)
-        progressed = False
-
-        for i in active[:]:
-
-            take = min(share, caps[i])
-
-            if take > 0:
-                allocations[i] += take
-                remaining_target -= take
-                caps[i] -= take
-                progressed = True
-
-                if getattr(front_methods[i], "storageType", None) == "geological formations":
-                    geo_used += take
-
-            if caps[i] <= 1e-12:
-                active.remove(i)
-
-        if not progressed:
-            break
-
-        # Update geo caps after geo_used changed
-        for i in active:
-            if getattr(front_methods[i], "storageType", None) == "geological formations":
-                caps[i] = min(
-                    caps[i],
-                    max(0.0, float(sp) - float(geo_used))
-                )
-
-    return allocations, geo_used
+    return sorted_front, allocations, geo_used
 
 def _pareto_front(methods):
     front = []
@@ -70,15 +51,7 @@ def _pareto_front(methods):
     return front
 
 
-def pareto_portfolio_iterative_layers(
-    viable_methods,
-    storage_target,
-    duration_years,
-    pass_storage_potential,
-    max_rounds=10_000,
-    plot=True,
-    plot_rounds_limit=8,
-):
+def pareto_portfolio_iterative_layers(SDR, SCC, start_year, current_year,viable_methods, storage_target, duration_years, pass_storage_potential,max_rounds=10_000, plot=True, plot_rounds_limit=8):
 
     sp = float(pass_storage_potential)
     geo_used = 0.0
@@ -114,7 +87,7 @@ def pareto_portfolio_iterative_layers(
 
         remaining_target = float(storage_target) - installed
 
-        allocs, geo_used = _allocate_equal_among_front(
+        sorted_front, allocs, geo_used = _allocate_by_increasing_mac(
         front_methods=front,
         remaining_target=remaining_target,
         duration_years=duration_years,
@@ -122,21 +95,51 @@ def pareto_portfolio_iterative_layers(
         geo_used=geo_used
         )
 
-        for idx, m in enumerate(front):
+        for idx, m in enumerate(sorted_front):
             actual = allocs[idx]
             if actual <= 0:
                 remaining.remove(m)
                 continue
+
             installed += actual
             contribution = float(m.sideEffectMax) * float(duration_years)
             partial = actual < contribution or installed >= storage_target
+            annual_gt = min(float(m.maxRemove), float(m.sideEffectMax))
+            if annual_gt <= 0:
+                pv_net = 0.0
+            else:
+                r = float(SDR) / 100.0
+                GT_TO_T = 1e9
+                net_per_ton = (SCC - float(m.mac))
+
+                pv_net = 0.0
+                remaining_gt = float(actual)
+                y = 0
+                while remaining_gt > 0 and y < duration_years:
+                    year = start_year + y
+                    t = year - current_year
+                    if t < 0:
+                        y += 1
+                        continue
+
+                    implemented_gt = annual_gt if remaining_gt >= annual_gt else remaining_gt
+                    remaining_gt -= implemented_gt
+
+                    discount_factor = (1 + r) ** t
+                    tons = implemented_gt * GT_TO_T
+                    pv_net += (tons * net_per_ton) / discount_factor
+                    y += 1
+                            
+
             portfolio.append({
                 "method": m,
                 "actual_contribution": actual,
                 "mac": m.mac,
                 "partial": partial,
-                "round": round_idx
+                "round": round_idx,
+                "pv_net": pv_net
             })
+
             status = "PARTIAL" if partial else "FULL"
             print(
                 f"Added {m.mainType} ({m.subType}) [{status}] | "
@@ -144,7 +147,9 @@ def pareto_portfolio_iterative_layers(
                 f"Implemented: {actual:.2f} Gt | "
                 f"Cumulative: {installed:.2f} Gt"
             )
+
             remaining.remove(m)
+
             if installed >= storage_target:
                 print("Storage target met.")
                 break
@@ -260,7 +265,7 @@ def pareto_portfolio_iterative_layers(
 
     return portfolio
 
-def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, pass_storage_potential, max_iterations=1000):
+def lexicographic_opt_iterative(SDR, SCC, start_year, current_year, viable_methods, storage_target, duration_years, pass_storage_potential, max_iterations=1000):
     sp = pass_storage_potential
     geo_store_counter = 0
     if not viable_methods:
@@ -297,11 +302,18 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
         if lg_canidate is None:
             print("No lexicographic-dominant method found. Stopping loop.")
             break
+        annual_gt = min(lg_canidate.maxRemove, lg_canidate.sideEffectMax)
+        if annual_gt <= 0:
+            print(f"{lg_canidate.mainType} ({lg_canidate.subType}) has non-positive annual_gt. Skipping.")
+            remaining_methods.remove(lg_canidate)
+            continue
 
-        contribution = lg_canidate.sideEffectMax * duration_years
+        # "Full feasible" contribution over the horizon (Gt)
+        contribution = annual_gt * duration_years
         actual_contribution = contribution
-        partial = False
-
+        partial = False 
+         
+        #test for geological storage constraint
         if lg_canidate.storageType == "geological formations":
             remaining_sp = sp - geo_store_counter
             if remaining_sp <= 0:
@@ -316,7 +328,44 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
             break
 
         actual_contribution = min(actual_contribution, remaining_capacity)
+        
+        # PV calcuation based on actual contributions
+        annual_gt = min(lg_canidate.maxRemove, lg_canidate.sideEffectMax)
+        if annual_gt <= 0:
+            pv_net = 0.0
+        else:
+            r = float(SDR) / 100.0
+            GT_TO_T = 1e9
 
+            net_per_ton = (SCC - float(lg_canidate.mac))  # SCC - MAC
+            pv_net = 0.0
+
+            remaining_gt = actual_contribution
+            y = 0
+
+            while remaining_gt > 0 and y < duration_years:
+                year = start_year + y
+                t = year - current_year
+                if t < 0:
+                    y += 1
+                    continue
+
+                implemented_gt = annual_gt if remaining_gt >= annual_gt else remaining_gt
+                remaining_gt -= implemented_gt
+
+                discount_factor = (1 + r) ** t
+                tons = implemented_gt * GT_TO_T
+
+                pv_net += (tons * net_per_ton) / discount_factor
+
+                y += 1
+
+            if remaining_gt > 0:
+                print(
+                    f"Warning: {lg_canidate.mainType} ({lg_canidate.subType}) "
+                    f"could not deliver full actual_contribution within duration_years. "
+                    f"Undelivered: {remaining_gt:.4f} Gt"
+                )
         if actual_contribution < contribution:
             partial = True
 
@@ -329,7 +378,8 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
             "method": lg_canidate,
             "actual_contribution": actual_contribution,
             "mac": lg_canidate.mac,
-            "partial": partial
+            "partial": partial,
+            "pv_net": pv_net,
         })
 
         status = "PARTIAL" if partial else "FULL"
@@ -405,8 +455,6 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
 
         label = f"{subtype}"
 
-        
-
         plt.annotate(
             label,
             xy=(entry["mac"], entry["method"].sideEffect),
@@ -424,7 +472,6 @@ def lexicographic_opt_iterative(viable_methods, storage_target, duration_years, 
             ),
             zorder=5
         )
-
 
     for i in range(1, len(step_macs)):
         plt.annotate(

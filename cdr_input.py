@@ -7,8 +7,8 @@ def get_cdr_from_user():
     
     # List of valid main types
     possible_methods = [
-        "LULUCF", "SCS", "BC", "BECCS", "DACCS",
-        "EW", "PWR", "BCM", "OAE", "OF"
+        "AR", "SCS", "Biochar", "BECCS", "DACCS",
+        "ERW", "PWR", "BC", "OAE", "OF"
     ]
     
     # Show options for mainType
