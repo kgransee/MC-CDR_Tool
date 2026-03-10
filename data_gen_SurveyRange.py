@@ -2,11 +2,11 @@ import numpy as np
 
 from cdr_method import CDRMethod
 
-def generate_random_portfolio(pseed):
+def generate_random_portfolioSR(pseed):
     # Fixed 10 method families (mainType)
     #PWR and blue carbon dropped due to lack of data on global potetials
     main_types = ["AR", "SCS", "Biochar", "BECCS", "DACCS", "ERW", "OAE", "OF"]
-    
+
     """"
         raw survey data
             Question                Mean Median  Min Max  N Range
@@ -19,22 +19,19 @@ def generate_random_portfolio(pseed):
          PWR  CB05_07  CB05_07  63.952381   75.0   12  99 21    87
          BC   CB05_08  CB05_08  57.764706   56.0   11  96 17    85
          OAE  CB05_09  CB05_09  34.500000   36.5  -58  97 14   155
-      OF      CB05_10  CB05_10 -29.428571  -36.5  -83  93 14   176
+          OF      CB05_10  CB05_10 -29.428571  -36.5  -83  93 14   176
     """
     raw_side_effects = {
-        "AR": 49.45,
-        "SCS": 55.67,
-        "Biochar": 38.95,
-        "BECCS": 9.32,
-        "DACCS": -4.86,
-        "ERW": 35.26,
-       # "PWR": 63.95,
-        #"BC": 57.76,
-        "OAE": 34.50,
-        "OF": -29.43
+        "AR": (-13,99),
+        "SCS": (2,99),
+        "Biochar": (-61,99),
+        "BECCS": (-100,73),
+        "DACCS": (-89,77),
+        "ERW": (-17,84),
+        "OAE": (-58,97),
+        "OF": (-83,93)
     }
-    scaled_side_effects = {k: v / 100.0 for k, v in raw_side_effects.items()}
-
+    scaled_side_effects = {k: (v[0] / 100.0, v[1] / 100.0) for k, v in raw_side_effects.items()}
     removal_max = {
         "AR": (0.5,3.6), #Rueda et al. 2021
         "SCS": (2,5), #Rueda et al. 2021
@@ -90,8 +87,10 @@ def generate_random_portfolio(pseed):
 
         low, high = cost_ranges[main]
         lowr, highr = removal_max[main]
+        lows, highs = scaled_side_effects[main]
         mac = float(rng.uniform(low, high))
         maxRemove=float(rng.uniform(lowr,highr))
+        scaledSideEffects=float(rng.uniform(lows,highs))
 
         portfolio.append(
             CDRMethod(
@@ -101,7 +100,7 @@ def generate_random_portfolio(pseed):
                 maxRemove=maxRemove,
                 initialCost=0.0,
                 storageType=storage_types[main],
-                sideEffect=float(scaled_side_effects[main]),
+                sideEffect=scaledSideEffects,
                 sideEffectMax=float(removal_SEmax[main])
             )
         )

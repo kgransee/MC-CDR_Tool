@@ -1,13 +1,13 @@
-from benefit_calx import *
 from cdr_input import *
-#from cdr_viable import is_method_viable 
 from cdr_viable import check_storage_feasibility, read_storage_potential, is_method_viable
 from define_removal_target import define_removal_target
-from output_portfolio import *
 from data_gen import *
-from simulations import *
-from simulations_noViaCheck import *
 from data_gen_Rueda import *
+from data_gen_EU import *
+from simulations import *
+from data_gen_Rueda import *
+from data_gen_EURueda import *
+from data_gen_SurveyRange import *
 
 
 def main():
@@ -48,17 +48,22 @@ def main():
     #loop for getting CDR methods
     cdr_methods = []
 
+    #variable to specify which data generation is to be used
+    dataUse = None
+    sim_choice = None
     print("\nHow would you like to provide CDR methods?")
     print("1. Enter methods manually")
     print("2. Import methods from an Excel file")
     print("3. Generate Global Portfolio (based on survey results)")
     print("4. Generate Global Portfolio (based on Rueda et al. 2021)")
-
+    print("5. Generate EU Portfolio (based literature, EU Policy, and survey)")
+    print("6. Generate EU Portfolio (based on Rueda et al. 2021 side impacts)")
+    print("7. Generate Global Portfolio (based on survey results, use of range of side impact esitmates)")
     while True:
-        choice = input("Select an option (1 or 2): ").strip()
-        if choice in ("1", "2", "3", "4"):
+        choice = input("Select an option (1-7): ").strip()
+        if choice in ("1", "2", "3", "4", "5", "6", "7"):
             break
-        print("Invalid selection. Please enter 1, 2, 3, or 4.")
+        print("Invalid selection. Please enter 1, 2, 3, 4, 5, 6, or 7.")
     #manual Entry
     if choice == "1":
         while True:
@@ -86,8 +91,8 @@ def main():
     elif choice == "3":
             print("\nGenerating global portfolio based on survey results...")
             print("a) Single run (one seed)")
-            print("b) 100-run simulation (fixed seed order for replication)")
-
+            print("b) 1000-run simulation (fixed seed order for replication)")
+            dataUse = "Survey"
             while True:
                 sim_choice = input("Select (a/b): ").strip().lower()
                 if sim_choice in ("a", "b"):
@@ -96,13 +101,14 @@ def main():
 
             if sim_choice == "a":
                 seed = 13
+
                 cdr_methods = generate_random_portfolio(pseed=seed)
                 print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
     elif choice == "4":
             print("\nGenerating global portfolio based on Rueda et al. 2021...")
             print("a) Single run (one seed)")
-            print("b) 100-run simulation (fixed seed order for replication)")
-
+            print("b) 1000-run simulation (fixed seed order for replication)")
+            dataUse = "Rueda"
             while True:
                 sim_choice = input("Select (a/b): ").strip().lower()
                 if sim_choice in ("a", "b"):
@@ -113,7 +119,51 @@ def main():
                 seed = 13
                 cdr_methods = generate_random_portfolioR(pseed=seed)
                 print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
+    elif choice == "5":
+            print("\nGenerating EU portfolio...")
+            print("a) Single run (one seed)")
+            print("b) 10,000-run simulation")
+            dataUse = "EU"
+            while True:
+                sim_choice = input("Select (a/b): ").strip().lower()
+                if sim_choice in ("a", "b"):
+                    break
+                print("Invalid selection. Enter a or b.")
 
+            if sim_choice == "a":
+                seed = 13
+                cdr_methods = generate_random_portfolioEU(pseed=seed)
+                print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
+    elif choice == "6":
+            print("\nGenerating EU portfolio...")
+            print("a) Single run (one seed)")
+            print("b) 10,000-run simulation")
+            dataUse = "EUR"
+            while True:
+                sim_choice = input("Select (a/b): ").strip().lower()
+                if sim_choice in ("a", "b"):
+                    break
+                print("Invalid selection. Enter a or b.")
+
+            if sim_choice == "a":
+                seed = 13
+                cdr_methods = generate_random_portfolioEUR(pseed=seed)
+                print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
+    elif choice == "7":
+            print("\nGenerating EU portfolio...")
+            print("a) Single run (one seed)")
+            print("b) 10,000-run simulation (fixed seed order for replication)")
+            dataUse = "SurveyRange"
+            while True:
+                sim_choice = input("Select (a/b): ").strip().lower()
+                if sim_choice in ("a", "b"):
+                    break
+                print("Invalid selection. Enter a or b.")
+
+            if sim_choice == "a":
+                seed = 13
+                cdr_methods = generate_random_portfolioSR(pseed=seed)
+                print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
     #confirmation of the imported methods or entered methods
     print("\nCollected CDR methods:")
     for m in cdr_methods:
@@ -146,9 +196,13 @@ def main():
 
         print("SDR =", SDR)
 
-    if choice == "3" and sim_choice == "b":
-        seeds = list(range(1, 100))
+    if choice in ("3", "4", "5", "5", "6", "7") and sim_choice == "b":
+        seeds = list(range(1, 10001))
+        seeds2 = list(range(1, 10001))
+        #first simulations with viability check
         run_100_simulations(
+            viaCheck=True,
+            dataUse = dataUse,
             seeds=seeds,
             removal_target=removal_target,
             SCC=SCC,
@@ -159,8 +213,10 @@ def main():
             NorthAmericanStoragePotential=NorthAmericanStoragePotential,
             GlobalStoragePotential=GlobalStoragePotential
         )
-        run_100_simulationsNC(
-            seeds=seeds,
+        run_100_simulations(
+            viaCheck=False,
+            dataUse = dataUse,
+            seeds=seeds2,
             removal_target=removal_target,
             SCC=SCC,
             SDR=SDR,
@@ -171,33 +227,8 @@ def main():
             GlobalStoragePotential=GlobalStoragePotential
         )
         return  # stop main() here
-    
-    if choice == "4" and sim_choice == "b":
-        seeds = list(range(1, 100))
-        run_100_simulations(
-            seeds=seeds,
-            removal_target=removal_target,
-            SCC=SCC,
-            SDR=SDR,
-            duration_years=15,
-            region=region,
-            EuropeanStoragePotential=EuropeanStoragePotential,
-            NorthAmericanStoragePotential=NorthAmericanStoragePotential,
-            GlobalStoragePotential=GlobalStoragePotential
-        )
-        run_100_simulationsNC(
-            seeds=seeds,
-            removal_target=removal_target,
-            SCC=SCC,
-            SDR=SDR,
-            duration_years=15,
-            region=region,
-            EuropeanStoragePotential=EuropeanStoragePotential,
-            NorthAmericanStoragePotential=NorthAmericanStoragePotential,
-            GlobalStoragePotential=GlobalStoragePotential
-        )
-        return  # stop main() here    
-    
+     
+    """""
     #check which methods are viable based on the input values
     current_year = removal_target["current_year"]
     start_year = removal_target["start_year"]
@@ -245,5 +276,6 @@ def main():
         print("No portfolio selected, skipping MAC curve.")
 
     plot_total_pv_net_lg_vs_pareto(lg_dimensions, pareto_dimensions)
+    """""
 if __name__ == "__main__":
     main()

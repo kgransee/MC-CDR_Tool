@@ -50,6 +50,8 @@ def generate_random_portfolioR(pseed):
         "ERW": (2.5,5)
     }
     #same, no side effect max in paper
+    #data not used, removal_max set to sideEffectMax
+    """""
     removal_SEmax = {
         "AR": (0.5,3.6), 
         "SCS": (2,5), 
@@ -58,7 +60,7 @@ def generate_random_portfolioR(pseed):
         "DACCS": (0.5,7),
         "ERW": (2.5,5)
     }
-
+        """""
     storage_types = {
         "AR": "vegetation",
         "SCS": "sediments",
@@ -69,24 +71,25 @@ def generate_random_portfolioR(pseed):
     }
     #using minx et al 2018
     cost_ranges = {
-        "BECCS": (100, 200),
-        "Biochar": (30, 120),
-        "DACCS": (100, 300),
         "AR": (5, 50),
         "SCS": (0, 100),
+        "Biochar": (30, 120),
+        "BECCS": (100, 200),
+        "DACCS": (100, 300),
         "ERW": (50, 200),
     }
 
     rng = np.random.default_rng(pseed)
 
     portfolio = []
-    for i, main in enumerate(main_types, start=1):
+    for main in main_types:
         #sub = str(i)  # "1".."10"
 
         low, high = cost_ranges[main]
         lowr, highr = removal_max[main]
         mac = float(rng.uniform(low, high))
         maxRemove=float(rng.uniform(lowr,highr))
+        sideEffectMax = maxRemove
 
         portfolio.append(
             CDRMethod(
@@ -95,8 +98,9 @@ def generate_random_portfolioR(pseed):
                 mac=mac,
                 maxRemove=maxRemove,
                 storageType=storage_types[main],
+                initialCost=0.0,
                 sideEffect=float(scaled_side_effects[main]),
-                sideEffectMax=float(removal_SEmax[main])
+                sideEffectMax=sideEffectMax
             )
         )
 

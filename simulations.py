@@ -1,21 +1,21 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
 import os
+from datetime import datetime
 from collections import defaultdict
-
+from data_gen_SurveyRange import *
+from data_gen_EURueda import *
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.ticker import FuncFormatter
+from data_gen_EU import *
+from cdr_viable import is_method_viable
 from data_gen import generate_random_portfolio
-from cdr_method import CDRMethod
-from main import (
-    is_method_viable,
+from data_gen_Rueda import generate_random_portfolioR
+from output_portfolio_sim import (
     lexicographic_opt_iterative,
     pareto_portfolio_iterative_layers,
-    marginal_abatement_cost_curve,
-    marginal_abatement_cost_curve_pareto,
 )
-
-# --------------------------------------------------
-# Helpers
+# -------------------------------------------------
+# General helpers
 # --------------------------------------------------
 def build_macc_steps(portfolio, storage_target):
     """
@@ -75,90 +75,78 @@ def evaluate_step_curve(edges, heights, x_grid):
 
         assigned = False
         for j in range(len(heights)):
-            if edges[j] <= x <= edges[j + 1]:
+            if edges[j] <= x < edges[j + 1]:
                 y[i] = heights[j]
                 assigned = True
                 break
 
-        if not assigned:
-            # beyond last implemented capacity -> leave NaN
-            pass
+        if not assigned and np.isclose(x, edges[-1]):
+            y[i] = heights[-1]
 
     return y
-
-
 def aggregate_macc_curves(results, portfolio_key, storage_target, n_grid=250):
     """
     Aggregate MACC curves across runs by evaluating each run on a common grid.
 
     Returns:
-        x_grid, mean_curve, std_curve
+        x_grid, mean_curve, std_curve, mean_final_extent
     """
     x_grid = np.linspace(0, float(storage_target), n_grid)
     curves = []
+    final_extents = []
 
     for r in results:
         portfolio = r.get(portfolio_key, []) or []
         edges, heights = build_macc_steps(portfolio, storage_target)
         y = evaluate_step_curve(edges, heights, x_grid)
         curves.append(y)
+        final_extents.append(edges[-1] if edges else 0.0)
 
     if not curves:
-        return x_grid, np.full_like(x_grid, np.nan), np.full_like(x_grid, np.nan)
+        nan_arr = np.full_like(x_grid, np.nan)
+        return x_grid, nan_arr, nan_arr, 0.0
 
     curves = np.array(curves, dtype=float)
+    final_extents = np.array(final_extents, dtype=float)
 
     mean_curve = np.nanmean(curves, axis=0)
-    std_curve = np.nanstd(curves, axis=0, ddof=1) if curves.shape[0] > 1 else np.zeros_like(mean_curve)
-
-    return x_grid, mean_curve, std_curve
-
-
-def plot_aggregate_macc_curve(results, storage_target, output_path):
-    """
-    Plot aggregate Lexicographic and Pareto MACC curves with ±1 std bands.
-    """
-    x_lg, lg_mean, lg_std = aggregate_macc_curves(
-        results, "lg_portfolio", storage_target=storage_target
-    )
-    x_p, p_mean, p_std = aggregate_macc_curves(
-        results, "pareto_portfolio", storage_target=storage_target
+    std_curve = (
+        np.nanstd(curves, axis=0, ddof=1)
+        if curves.shape[0] > 1
+        else np.zeros_like(mean_curve)
     )
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    mean_final_extent = float(np.mean(final_extents))
 
-    # Lexicographic
-    ax.plot(x_lg, lg_mean, linewidth=2.2, label="Lexicographic")
-    ax.fill_between(
-        x_lg,
-        lg_mean - lg_std,
-        lg_mean + lg_std,
-        alpha=0.2
-    )
+    # Clip the aggregate curve to the mean achieved cumulative removal
+    mask_beyond_extent = x_grid > mean_final_extent
+    mean_curve[mask_beyond_extent] = np.nan
+    std_curve[mask_beyond_extent] = np.nan
 
-    # Pareto
-    ax.plot(x_p, p_mean, linewidth=2.2, label="Pareto")
-    ax.fill_between(
-        x_p,
-        p_mean - p_std,
-        p_mean + p_std,
-        alpha=0.2
-    )
+    return x_grid, mean_curve, std_curve, mean_final_extent
 
-    ax.set_xlim(left=0, right=float(storage_target))
-    ax.set_ylim(bottom=0)
-    ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
-    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)")
-    ax.set_title("Aggregate MACC Across Runs")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
+def extract_method_name(method):
+    """Use mainType for aggregation across runs."""
+    return method.mainType
 
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=220, bbox_inches="tight")
-    plt.close()
 
-    print(f"Saved aggregate MACC plot: {output_path}")
-    return output_path
+def _format_billions(x, pos):
+    return f"{x:,.0f}"
+
+
+def _step_fill_arrays(edges, mean_vals, std_vals):
+    """Build step-compatible arrays for mean ± std shading."""
+    if not mean_vals:
+        return np.array([]), np.array([]), np.array([])
+
+    x = np.array(edges, dtype=float)
+    y = np.array([mean_vals[0]] + mean_vals, dtype=float)
+    s = np.array([std_vals[0]] + std_vals, dtype=float)
+
+    lower = np.maximum(0.0, y - s)
+    upper = y + s
+    return x, lower, upper
+
 
 def compute_total_pv(portfolio):
     """Sum raw pv_net across a portfolio."""
@@ -170,62 +158,28 @@ def compute_adjusted_total_pv(portfolio):
     Sum externality-adjusted pv_net across a portfolio.
 
     Assumes method.sideEffect is already scaled to [-1, 1].
-    Example:
-        0.4945  -> +49.45%
-       -0.2943  -> -29.43%
     """
+    total_positive = 0.0
+    total_negative = 0.0
     total = 0.0
     for e in (portfolio or []):
         m = e["method"]
         pv = float(e.get("pv_net", 0.0))
-        se = float(getattr(m, "sideEffect", 0.0))   # already scaled to [-1, 1]
-        total += pv * (1 + se)
-    return total
+        se = float(getattr(m, "sideEffect", 0.0))
+        adjusted = pv + (pv * se)
 
+        total += adjusted
 
+        if se >= 0:
+            total_positive += adjusted
+        else:
+            total_negative += adjusted
+        
+    return total, total_positive, total_negative
 
-def _format_billions(x, pos):
-    return f"{x:,.0f}"
-
-
-def plot_bar_comparison(values, errors, labels, ylabel, title, output_path):
-    values_b = np.array(values, dtype=float) / 1e9
-    errors_b = np.array(errors, dtype=float) / 1e9
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar(labels, values_b, yerr=errors_b, capsize=6)
-
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.yaxis.set_major_formatter(FuncFormatter(_format_billions))
-
-    ymax = max(values_b + errors_b) * 1.15 if len(values_b) else 1.0
-    ymin = min(0.0, np.min(values_b - errors_b) * 1.05)
-    ax.set_ylim(ymin, ymax)
-
-    for bar, v, e in zip(bars, values_b, errors_b):
-        y = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y + e,
-            f"{v:,.2f}B",
-            ha="center",
-            va="bottom"
-        )
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=220, bbox_inches="tight")
-    plt.close()
-
-    print(f"Saved plot: {output_path}")
-    print(f"Y-axis range: {ymin:,.2f}B to {ymax:,.2f}B")
-    for label, v, e in zip(labels, values_b, errors_b):
-        print(f"{label}: {v:,.2f}B ± {e:,.2f}B")
-
-
-def aggregate_method_pv(results, portfolio_key):
-    # First collect the full method universe across all runs
+def aggregate_method_removal(results, portfolio_key):
     all_methods = set()
+
     for r in results:
         portfolio = r.get(portfolio_key, []) or []
         for e in portfolio:
@@ -233,11 +187,805 @@ def aggregate_method_pv(results, portfolio_key):
             all_methods.add(method_name)
 
     all_methods = sorted(all_methods)
-
-    # Prepare one list per method
     method_totals = {method_name: [] for method_name in all_methods}
 
-    # For each run, compute that run's totals, then append 0 for missing methods
+    for r in results:
+        portfolio = r.get(portfolio_key, []) or []
+        run_totals = {method_name: 0.0 for method_name in all_methods}
+
+        for e in portfolio:
+            method_name = extract_method_name(e["method"])
+            run_totals[method_name] += float(e.get("actual_contribution", 0.0))
+
+        for method_name in all_methods:
+            method_totals[method_name].append(run_totals[method_name])
+
+    return method_totals
+
+
+def aggregate_lexicographic_scatter_data(results):
+    method_mac = defaultdict(list)
+    method_side = defaultdict(list)
+    method_position = defaultdict(list)
+    method_contrib = defaultdict(list)
+    method_selected_runs = defaultdict(int)
+
+    n_runs = len(results)
+
+    # collect all methods that ever appear
+    all_methods = set()
+    for r in results:
+        portfolio = r.get("lg_portfolio", []) or []
+        for e in portfolio:
+            method = extract_method_name(e["method"])
+            all_methods.add(method)
+
+    # process runs
+    for r in results:
+        portfolio = r.get("lg_portfolio", []) or []
+        entries = [
+            e for e in portfolio
+            if float(e.get("actual_contribution", 0.0)) > 0
+        ]
+
+        # initialize run positions as NaN (not implemented)
+        run_positions = {m: np.nan for m in all_methods}
+
+        seen_this_run = set()
+
+        for pos, e in enumerate(entries, start=1):
+            method_obj = e["method"]
+            method = extract_method_name(method_obj)
+
+            run_positions[method] = float(pos)
+
+            method_mac[method].append(float(e["mac"]))
+            method_side[method].append(float(getattr(method_obj, "sideEffect", np.nan)))
+            method_contrib[method].append(float(e.get("actual_contribution", 0.0)))
+
+            seen_this_run.add(method)
+
+        # store one position per method per run
+        for method in all_methods:
+            method_position[method].append(run_positions[method])
+
+        for method in seen_this_run:
+            method_selected_runs[method] += 1
+
+    rows = []
+    for method in sorted(all_methods):
+        rows.append({
+            "method": method,
+            "avg_mac": float(np.mean(method_mac[method])) if method_mac[method] else np.nan,
+            "avg_side_effect": float(np.mean(method_side[method])) if method_side[method] else np.nan,
+            "avg_position": float(np.nanmean(method_position[method])) if method_position[method] else np.nan,
+            "avg_contribution": float(np.mean(method_contrib[method])) if method_contrib[method] else 0.0,
+            "selection_frequency": method_selected_runs[method] / n_runs if n_runs > 0 else 0.0,
+        })
+
+    return rows
+
+def plot_aggregate_lexicographic_scatter(
+    results,
+    output_path,
+    title="Aggregate Lexicographic Scatter by Average Selection Position",
+):
+    rows = aggregate_lexicographic_scatter_data(results)
+    if not rows:
+        print("No aggregate lexicographic scatter data available.")
+        return None
+
+    methods = np.array([r["method"] for r in rows], dtype=object)
+    x = np.array([r["avg_mac"] for r in rows], dtype=float)
+    y = np.array([r["avg_side_effect"] for r in rows], dtype=float)
+    c = np.array([r["avg_position"] for r in rows], dtype=float)
+    s_raw = np.array([r["avg_contribution"] for r in rows], dtype=float)
+    freq = np.array([r.get("selection_frequency", np.nan) for r in rows], dtype=float)
+
+    # keep rows that have plottable coordinates
+    valid_xy = np.isfinite(x) & np.isfinite(y)
+    if not np.any(valid_xy):
+        print("No valid aggregate lexicographic scatter data to plot.")
+        return None
+
+    methods = methods[valid_xy]
+    x = x[valid_xy]
+    y = y[valid_xy]
+    c = c[valid_xy]
+    s_raw = s_raw[valid_xy]
+    freq = freq[valid_xy]
+
+    # size scaling
+    max_s = np.nanmax(s_raw) if np.any(np.isfinite(s_raw)) else 0.0
+    sizes = (
+        100 + 900 * (s_raw / max_s)
+        if max_s > 0
+        else np.full_like(s_raw, 200.0)
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # methods with a defined average position
+    ranked_mask = np.isfinite(c)
+
+    if np.any(ranked_mask):
+        vmax = np.nanmax(c[ranked_mask])
+        sc = ax.scatter(
+            x[ranked_mask],
+            y[ranked_mask],
+            c=c[ranked_mask],
+            s=sizes[ranked_mask],
+            cmap="turbo",
+            vmin=1,
+            vmax=vmax,
+            alpha=0.85,
+        )
+
+        cbar = plt.colorbar(sc, ax=ax)
+        cbar.set_label("Average Implemented Lexicographic Selection Position")
+
+        # cleaner ticks for ordinal rank values
+        tick_max = int(np.ceil(vmax))
+        if tick_max >= 1:
+            cbar.set_ticks(np.arange(1, tick_max + 1))
+
+    else:
+        sc = None
+
+    # methods that never got a valid rank (avg_position = NaN)
+    # this usually means never implemented / never selected
+    unranked_mask = ~ranked_mask
+    if np.any(unranked_mask):
+        ax.scatter(
+            x[unranked_mask],
+            y[unranked_mask],
+            s=sizes[unranked_mask],
+            marker="x",
+            alpha=0.9,
+            label="Not implemented",
+        )
+        ax.legend()
+
+    offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
+    for i, method in enumerate(methods):
+        dx, dy = offsets[i % len(offsets)]
+
+        # append frequency so non-implementation is visible in the label too
+        label = method
+        if np.isfinite(freq[i]):
+            label = f"{method} ({freq[i]:.0%})"
+
+        ax.annotate(
+            label,
+            xy=(x[i], y[i]),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            ha="center",
+            va="center",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85),
+        )
+
+    ax.set_xlabel("Average MAC (€/tCO₂)")
+    ax.set_ylabel("Average Side Effect")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+    print(f"Saved aggregate lexicographic scatter plot: {output_path}")
+    return output_path
+
+
+def aggregate_pareto_scatter_data(results):
+    method_mac = defaultdict(list)
+    method_side = defaultdict(list)
+    method_layer = defaultdict(list)
+    method_contrib = defaultdict(list)
+    method_selected_runs = defaultdict(int)
+
+    n_runs = len(results)
+
+    # collect all methods that ever appear in any pareto portfolio
+    all_methods = set()
+    for r in results:
+        portfolio = r.get("pareto_portfolio", []) or []
+        for e in portfolio:
+            method = extract_method_name(e["method"])
+            all_methods.add(method)
+
+    for r in results:
+        portfolio = r.get("pareto_portfolio", []) or []
+
+        # default: not implemented in this run
+        run_layers = {m: np.nan for m in all_methods}
+        seen_this_run = set()
+
+        for e in portfolio:
+            method_obj = e["method"]
+            method = extract_method_name(method_obj)
+
+            contrib = float(e.get("actual_contribution", 0.0))
+            if contrib <= 0:
+                continue
+
+            method_mac[method].append(float(e["mac"]))
+            method_side[method].append(float(getattr(method_obj, "sideEffect", np.nan)))
+            method_contrib[method].append(contrib)
+
+            run_layers[method] = float(e.get("round", np.nan))
+            seen_this_run.add(method)
+
+        # store one layer value per method per run
+        for method in all_methods:
+            method_layer[method].append(run_layers[method])
+
+        for method in seen_this_run:
+            method_selected_runs[method] += 1
+
+    rows = []
+    for method in sorted(all_methods):
+        rows.append({
+            "method": method,
+            "avg_mac": float(np.mean(method_mac[method])) if method_mac[method] else np.nan,
+            "avg_side_effect": float(np.mean(method_side[method])) if method_side[method] else np.nan,
+            "avg_layer": float(np.nanmean(method_layer[method])) if np.any(np.isfinite(method_layer[method])) else np.nan,
+            "avg_contribution": float(np.mean(method_contrib[method])) if method_contrib[method] else 0.0,
+            "selection_frequency": method_selected_runs[method] / n_runs if n_runs > 0 else 0.0,
+        })
+
+    return rows
+
+def plot_aggregate_pareto_scatter(
+    results,
+    output_path,
+    title="Aggregate Implemented Pareto Scatter by Average Layer",
+):
+    rows = aggregate_pareto_scatter_data(results)
+    if not rows:
+        print("No aggregate Pareto scatter data available.")
+        return None
+
+    methods = np.array([r["method"] for r in rows], dtype=object)
+    x = np.array([r["avg_mac"] for r in rows], dtype=float)
+    y = np.array([r["avg_side_effect"] for r in rows], dtype=float)
+    c = np.array([r["avg_layer"] for r in rows], dtype=float)
+    s_raw = np.array([r["avg_contribution"] for r in rows], dtype=float)
+    freq = np.array([r.get("selection_frequency", np.nan) for r in rows], dtype=float)
+
+    # keep only rows with plottable coordinates
+    valid_xy = np.isfinite(x) & np.isfinite(y)
+    if not np.any(valid_xy):
+        print("No valid aggregate Pareto scatter data to plot.")
+        return None
+
+    methods = methods[valid_xy]
+    x = x[valid_xy]
+    y = y[valid_xy]
+    c = c[valid_xy]
+    s_raw = s_raw[valid_xy]
+    freq = freq[valid_xy]
+
+    # size scaling
+    max_s = np.nanmax(s_raw) if np.any(np.isfinite(s_raw)) else 0.0
+    sizes = (
+        100 + 900 * (s_raw / max_s)
+        if max_s > 0
+        else np.full_like(s_raw, 200.0)
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # methods with a defined average Pareto layer
+    ranked_mask = np.isfinite(c)
+
+    if np.any(ranked_mask):
+        vmax = np.nanmax(c[ranked_mask])
+        sc = ax.scatter(
+            x[ranked_mask],
+            y[ranked_mask],
+            c=c[ranked_mask],
+            s=sizes[ranked_mask],
+            cmap="turbo",
+            vmin=1,
+            vmax=vmax,
+            alpha=0.85,
+        )
+
+        cbar = plt.colorbar(sc, ax=ax)
+        cbar.set_label("Average Implemented Pareto Layer")
+
+        # cleaner integer ticks for layers
+        tick_max = int(np.ceil(vmax))
+        if tick_max >= 1:
+            cbar.set_ticks(np.arange(1, tick_max + 1))
+
+    # methods with no valid layer (never implemented / never selected)
+    unranked_mask = ~ranked_mask
+    if np.any(unranked_mask):
+        ax.scatter(
+            x[unranked_mask],
+            y[unranked_mask],
+            s=sizes[unranked_mask],
+            marker="x",
+            alpha=0.9,
+            label="Not implemented",
+        )
+        ax.legend()
+
+    offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
+    for i, method in enumerate(methods):
+        dx, dy = offsets[i % len(offsets)]
+
+        label = method
+        if np.isfinite(freq[i]):
+            label = f"{method} ({freq[i]:.0%})"
+
+        ax.annotate(
+            label,
+            xy=(x[i], y[i]),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            ha="center",
+            va="center",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85),
+        )
+
+    ax.set_xlabel("Average MAC (€/tCO₂)")
+    ax.set_ylabel("Average Side Effect")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+    print(f"Saved aggregate Pareto scatter plot: {output_path}")
+    return output_path
+
+# --------------------------------------------------
+# Aggregate MACC helpers
+# --------------------------------------------------
+
+def aggregate_lexicographic_macc(results):
+    """
+    Aggregate lexicographic MACC across runs and keep method labels so
+    segments can be annotated in the plot.
+    """
+
+    all_positions = set()
+
+    for r in results:
+        portfolio = r.get("lg_portfolio", []) or []
+        entries = [
+            e for e in portfolio
+            if float(e.get("actual_contribution", 0.0)) > 0
+        ]
+        for i, _ in enumerate(entries):
+            all_positions.add(i)
+
+    all_positions = sorted(all_positions)
+    if not all_positions:
+        return [0.0], [], [], []
+
+    pos_macs = {i: [] for i in all_positions}
+    pos_caps = {i: [] for i in all_positions}
+    pos_methods = {i: [] for i in all_positions}
+
+    for r in results:
+        portfolio = r.get("lg_portfolio", []) or []
+        entries = [
+            e for e in portfolio
+            if float(e.get("actual_contribution", 0.0)) > 0
+        ]
+
+        run_data = {}
+        for i, e in enumerate(entries):
+            run_data[i] = (
+                float(e["mac"]),
+                float(e["actual_contribution"]),
+                extract_method_name(e["method"]),
+            )
+
+        for i in all_positions:
+            if i in run_data:
+                mac, cap, method = run_data[i]
+                pos_macs[i].append(mac)
+                pos_caps[i].append(cap)
+                pos_methods[i].append(method)
+            else:
+                pos_macs[i].append(np.nan)
+                pos_caps[i].append(0.0)
+                pos_methods[i].append(None)
+
+    edges = [0.0]
+    heights_mean = []
+    heights_std = []
+    aggregated_segments = []
+
+    installed = 0.0
+
+    for i in all_positions:
+        cap_vals = np.array(pos_caps[i], dtype=float)
+        mac_vals = np.array(pos_macs[i], dtype=float)
+
+        cap_mean = float(np.mean(cap_vals))
+        if cap_mean <= 0:
+            continue
+
+        mac_mean = float(np.nanmean(mac_vals))
+        mac_std = float(np.nanstd(mac_vals, ddof=1)) if np.sum(~np.isnan(mac_vals)) > 1 else 0.0
+
+        valid_methods = [m for m in pos_methods[i] if m is not None]
+        method_name = max(set(valid_methods), key=valid_methods.count) if valid_methods else None
+
+        x0 = installed
+        installed += cap_mean
+        x1 = installed
+
+        edges.append(x1)
+        heights_mean.append(mac_mean)
+        heights_std.append(mac_std)
+
+        aggregated_segments.append({
+            "position": i + 1,
+            "method": method_name,
+            "cap_mean": cap_mean,
+            "mac_mean": mac_mean,
+            "mac_std": mac_std,
+            "x0": x0,
+            "x1": x1,
+        })
+
+    return edges, heights_mean, heights_std, aggregated_segments
+
+def extract_pareto_layers(portfolio):
+    layers = {}
+
+    for e in portfolio:
+        layer = e.get("round")
+        contrib = float(e.get("actual_contribution", 0.0))
+        if layer is None or contrib <= 0:
+            continue
+
+        method = extract_method_name(e["method"])
+
+        layers.setdefault(layer, []).append({
+            "method": method,
+            "mac": float(e["mac"]),
+            "cap": contrib
+        })
+
+    for layer in layers:
+        layers[layer].sort(key=lambda x: x["mac"])
+
+    return layers
+
+
+def aggregate_pareto_macc(results):
+    """
+    Aggregate Pareto MACC across runs.
+
+    Ensures that within each Pareto layer the aggregated entries
+    are sorted by increasing mean MAC.
+    """
+
+    all_keys = set()
+
+    # discover all (layer, index) slots
+    for r in results:
+        layers = extract_pareto_layers(r.get("pareto_portfolio", []) or [])
+        for layer, entries in layers.items():
+            for i, _ in enumerate(entries):
+                all_keys.add((layer, i))
+
+    all_keys = sorted(all_keys)
+
+    layer_macs = {k: [] for k in all_keys}
+    layer_caps = {k: [] for k in all_keys}
+    layer_methods = {k: [] for k in all_keys}
+
+    # collect data from each run
+    for r in results:
+        layers = extract_pareto_layers(r.get("pareto_portfolio", []) or [])
+
+        run_data = {}
+        for layer, entries in layers.items():
+            for i, entry in enumerate(entries):
+                run_data[(layer, i)] = (
+                    float(entry["mac"]),
+                    float(entry["cap"]),
+                    entry["method"],
+                )
+
+        for k in all_keys:
+            if k in run_data:
+                mac, cap, method = run_data[k]
+                layer_macs[k].append(mac)
+                layer_caps[k].append(cap)
+                layer_methods[k].append(method)
+            else:
+                layer_macs[k].append(np.nan)
+                layer_caps[k].append(0.0)
+                layer_methods[k].append(None)
+
+    aggregated_by_layer = {}
+
+    for layer, idx in all_keys:
+        cap_vals = np.array(layer_caps[(layer, idx)], dtype=float)
+        mac_vals = np.array(layer_macs[(layer, idx)], dtype=float)
+
+        cap_mean = float(np.mean(cap_vals))
+        if cap_mean <= 0:
+            continue
+
+        mac_mean = float(np.nanmean(mac_vals))
+        mac_std = float(np.nanstd(mac_vals, ddof=1)) if np.sum(~np.isnan(mac_vals)) > 1 else 0.0
+
+        valid_methods = [m for m in layer_methods[(layer, idx)] if m is not None]
+        method_name = max(set(valid_methods), key=valid_methods.count) if valid_methods else None
+
+        aggregated_by_layer.setdefault(layer, []).append({
+            "mac_mean": mac_mean,
+            "mac_std": mac_std,
+            "cap_mean": cap_mean,
+            "method": method_name,
+        })
+
+    # sort aggregated entries inside each layer by MAC
+    for layer in aggregated_by_layer:
+        aggregated_by_layer[layer].sort(key=lambda d: d["mac_mean"])
+
+    edges = [0.0]
+    heights_mean = []
+    heights_std = []
+    layer_boundaries = {}
+
+    installed = 0.0
+
+    for layer in sorted(aggregated_by_layer.keys()):
+        for entry in aggregated_by_layer[layer]:
+            installed += entry["cap_mean"]
+
+            edges.append(installed)
+            heights_mean.append(entry["mac_mean"])
+            heights_std.append(entry["mac_std"])
+
+        layer_boundaries[layer] = installed
+
+    return edges, heights_mean, heights_std, layer_boundaries, aggregated_by_layer
+# --------------------------------------------------
+# Plotting helpers
+# --------------------------------------------------
+def _step_xy(edges, heights):
+    if not heights:
+        return [], []
+
+    xs = [edges[0]]
+    ys = [heights[0]]
+
+    for i in range(len(heights)):
+        xs.append(edges[i + 1])
+        ys.append(heights[i])
+
+        if i + 1 < len(heights):
+            xs.append(edges[i + 1])
+            ys.append(heights[i + 1])
+
+    return xs, ys
+
+def plot_structural_macc_curve(results, output_path, title_prefix=""):
+    lg_edges, lg_heights_mean, lg_heights_std, lg_segments = aggregate_lexicographic_macc(results)    
+    p_edges, p_heights_mean, p_heights_std, layer_boundaries, aggregated_by_layer = aggregate_pareto_macc(results)
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    if lg_heights_mean:
+        ax.step(
+            lg_edges,
+            [lg_heights_mean[0]] + lg_heights_mean,
+            where="post",
+            linewidth=2.4,
+            color="black",
+            label="Lexicographic",
+        )
+        x, lower, upper = _step_fill_arrays(lg_edges, lg_heights_mean, lg_heights_std)
+        ax.fill_between(x, lower, upper, step="post", color="black",alpha=0.20)
+        for seg in lg_segments:
+            if seg["method"] is not None:
+                mid_x = 0.5 * (seg["x0"] + seg["x1"])
+                mid_y = seg["mac_mean"]
+
+                ax.text(
+                    mid_x,
+                    mid_y,
+                    seg["method"],
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    rotation=45,
+                    color="black",
+                )
+
+    if p_heights_mean and layer_boundaries:
+        sorted_layers = sorted(layer_boundaries.keys())
+
+        start_idx = 0
+        prev_boundary = 0.0
+
+        for li, layer in enumerate(sorted_layers):
+            layer_end = layer_boundaries[layer]
+
+            # collect this layer's entries
+            layer_edges = [prev_boundary]
+            layer_means = []
+            layer_stds = []
+
+            while start_idx < len(p_heights_mean) and p_edges[start_idx + 1] <= layer_end + 1e-12:
+                layer_edges.append(p_edges[start_idx + 1])
+                layer_means.append(p_heights_mean[start_idx])
+                layer_stds.append(p_heights_std[start_idx])
+                start_idx += 1
+            pareto_color = "#d62728"
+            if layer_means:
+                # mean step curve for this layer only
+                layer_xs, layer_ys = _step_xy(layer_edges, layer_means)
+                ax.plot(
+                    layer_xs,
+                    layer_ys,
+                    color=pareto_color,
+                    linewidth=2.4,
+                    label="Pareto" if li == 0 else None
+                )
+
+                # std band for this layer only
+                x = np.array(layer_edges, dtype=float)
+                y = np.array([layer_means[0]] + layer_means, dtype=float)
+                s = np.array([layer_stds[0]] + layer_stds, dtype=float)
+
+                lower = np.maximum(0.0, y - s)
+                upper = y + s
+
+                ax.fill_between(
+                    x,
+                    lower,
+                    upper,
+                    step="post",
+                    color = pareto_color,
+                    alpha=0.20
+                )
+                
+                running_x = prev_boundary
+                for entry in aggregated_by_layer[layer]:
+                    mid_x = running_x + entry["cap_mean"] / 2.0
+                    mid_y = entry["mac_mean"]
+
+                    if entry["method"] is not None:
+                        ax.text(
+                        mid_x,
+                        mid_y,
+                        entry["method"],
+                        ha="center",
+                        va="bottom",
+                        fontsize=8,
+                        rotation=45,
+                        color=pareto_color,
+                    )
+
+                    running_x += entry["cap_mean"]
+            # vertical line at end of layer
+            ax.axvline(
+                x=layer_end,
+                linestyle="--",
+                linewidth=1.2,
+                color= pareto_color,
+                alpha=0.7
+            )
+
+            prev_boundary = layer_end
+    xmax = max(
+        [0.0]
+        + ([lg_edges[-1]] if lg_heights_mean else [])
+        + ([p_edges[-1]] if p_heights_mean else [])
+    )
+
+    ymax_candidates = [0.0]
+    if lg_heights_mean:
+        ymax_candidates.extend(np.array(lg_heights_mean) + np.array(lg_heights_std))
+    if p_heights_mean:
+        ymax_candidates.extend(np.array(p_heights_mean) + np.array(p_heights_std))
+    ymax = max(ymax_candidates) * 1.10 if ymax_candidates else 1.0
+
+    ax.set_xlim(left=0, right=xmax if xmax > 0 else 1.0)
+    ax.set_ylim(bottom=0, top=ymax if ymax > 0 else 1.0)
+    ax.margins(x=0)
+    ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
+    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)")
+    ax.set_title(f"{title_prefix}Aggregate MACC Across Runs".strip())
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved aggregate MACC plot: {output_path}")
+    print(f"Lexicographic aggregate total: {lg_edges[-1] if lg_heights_mean else 0:.2f} Gt")
+    print(f"Pareto aggregate total: {p_edges[-1] if p_heights_mean else 0:.2f} Gt")
+    return output_path
+
+
+def plot_bar_comparison(values, errors, labels, ylabel, title, output_path):
+    values_b = np.array(values, dtype=float) / 1e9
+    errors_b = np.array(errors, dtype=float) / 1e9
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+
+    colors = ["black", "#d62728"] 
+
+    bars = ax.bar(
+        labels,
+        values_b,
+        width=0.65,
+        color=colors[:len(values_b)],
+        edgecolor="black",
+        linewidth=0.8,
+        yerr=errors_b,
+        capsize=5,
+        error_kw={
+            "elinewidth": 1.2,
+            "capthick": 1.2,
+            "ecolor": "black",
+        },
+        zorder=3,
+    )
+
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, pad=10)
+
+    ax.yaxis.set_major_formatter(FuncFormatter(_format_billions))
+
+    ymax = max(values_b + errors_b) * 1.15 if len(values_b) else 1.0
+    ymin = min(0.0, np.min(values_b - errors_b) * 1.05)
+    ax.set_ylim(ymin, ymax)
+
+    # cleaner grid
+    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+
+    # remove clutter
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # value labels
+    for bar, v, e in zip(bars, values_b, errors_b):
+        y = bar.get_height()
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            y + e,
+            f"{v:,.2f}B",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved plot: {output_path}")
+    print(f"Y-axis range: {ymin:,.2f}B to {ymax:,.2f}B")
+
+
+def aggregate_method_pv(results, portfolio_key):
+    all_methods = set()
+    for r in results:
+        portfolio = r.get(portfolio_key, []) or []
+        for e in portfolio:
+            all_methods.add(extract_method_name(e["method"]))
+
+    all_methods = sorted(all_methods)
+    method_totals = {method_name: [] for method_name in all_methods}
+
     for r in results:
         portfolio = r.get(portfolio_key, []) or []
         run_totals = {method_name: 0.0 for method_name in all_methods}
@@ -250,20 +998,96 @@ def aggregate_method_pv(results, portfolio_key):
             method_totals[method_name].append(run_totals[method_name])
 
     return method_totals
-def extract_method_name(method):
-    return method.mainType
+
+def plot_aggregate_method_removal(results, output_path, title_prefix=""):
+    lg_totals = aggregate_method_removal(results, "lg_portfolio")
+    pareto_totals = aggregate_method_removal(results, "pareto_portfolio")
+
+    all_methods = sorted(set(lg_totals.keys()) | set(pareto_totals.keys()))
+    lg_means, lg_stds, pareto_means, pareto_stds = [], [], [], []
+
+    for method in all_methods:
+        lg_vals = np.array(lg_totals.get(method, []), dtype=float)
+        p_vals = np.array(pareto_totals.get(method, []), dtype=float)
+
+        lg_means.append(lg_vals.mean() if lg_vals.size else 0.0)
+        pareto_means.append(p_vals.mean() if p_vals.size else 0.0)
+        lg_stds.append(lg_vals.std(ddof=1) if lg_vals.size > 1 else 0.0)
+        pareto_stds.append(p_vals.std(ddof=1) if p_vals.size > 1 else 0.0)
+
+    x = np.arange(len(all_methods))
+    width = 0.38
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+
+    ax.bar(
+        x - width / 2,
+        lg_means,
+        width,
+        yerr=lg_stds,
+        capsize=5,
+        color="black",
+        edgecolor="black",
+        linewidth=0.8,
+        error_kw={
+            "elinewidth": 1.2,
+            "capthick": 1.2,
+            "ecolor": "black",
+        },
+        label="Lexicographic",
+        zorder=3,
+    )
+
+    ax.bar(
+        x + width / 2,
+        pareto_means,
+        width,
+        yerr=pareto_stds,
+        capsize=5,
+        color="#d62728",
+        edgecolor="black",
+        linewidth=0.8,
+        error_kw={
+            "elinewidth": 1.2,
+            "capthick": 1.2,
+            "ecolor": "black",
+        },
+        label="Pareto",
+        zorder=3,
+    )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(all_methods, rotation=45, ha="right")
+    ax.set_ylabel("Average Removal (Gt CO₂ per simulation)")
+    ax.set_title(f"{title_prefix}Average Removal by Method Across Runs".strip(), pad=10)
+    ax.legend()
+
+    ymax = max(
+        [0.0]
+        + [m + s for m, s in zip(lg_means, lg_stds)]
+        + [m + s for m, s in zip(pareto_means, pareto_stds)]
+    ) * 1.15
+    ax.set_ylim(0, ymax if ymax > 0 else 1)
+
+    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved aggregate method removal plot: {output_path}")
+    print("Methods plotted:", all_methods)
+    return output_path
 
 
-def plot_aggregate_method_pv(results, output_path):
+def plot_aggregate_method_pv(results, output_path, title_prefix=""):
     lg_totals = aggregate_method_pv(results, "lg_portfolio")
     pareto_totals = aggregate_method_pv(results, "pareto_portfolio")
 
     all_methods = sorted(set(lg_totals.keys()) | set(pareto_totals.keys()))
-
-    lg_means = []
-    lg_stds = []
-    pareto_means = []
-    pareto_stds = []
+    lg_means, lg_stds, pareto_means, pareto_stds = [], [], [], []
 
     for method in all_methods:
         lg_vals = np.array(lg_totals.get(method, []), dtype=float)
@@ -271,40 +1095,229 @@ def plot_aggregate_method_pv(results, output_path):
 
         lg_means.append(lg_vals.mean() / 1e9 if lg_vals.size else 0.0)
         pareto_means.append(p_vals.mean() / 1e9 if p_vals.size else 0.0)
-
         lg_stds.append(lg_vals.std(ddof=1) / 1e9 if lg_vals.size > 1 else 0.0)
         pareto_stds.append(p_vals.std(ddof=1) / 1e9 if p_vals.size > 1 else 0.0)
 
     x = np.arange(len(all_methods))
     width = 0.38
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(x - width / 2, lg_means, width, yerr=lg_stds, capsize=4, label="Lexicographic")
-    ax.bar(x + width / 2, pareto_means, width, yerr=pareto_stds, capsize=4, label="Pareto")
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+
+    ax.bar(
+        x - width / 2,
+        lg_means,
+        width,
+        yerr=lg_stds,
+        capsize=5,
+        color="black",
+        edgecolor="black",
+        linewidth=0.8,
+        error_kw={
+            "elinewidth": 1.2,
+            "capthick": 1.2,
+            "ecolor": "black",
+        },
+        label="Lexicographic",
+        zorder=3,
+    )
+
+    ax.bar(
+        x + width / 2,
+        pareto_means,
+        width,
+        yerr=pareto_stds,
+        capsize=5,
+        color="#d62728",
+        edgecolor="black",
+        linewidth=0.8,
+        error_kw={
+            "elinewidth": 1.2,
+            "capthick": 1.2,
+            "ecolor": "black",
+        },
+        label="Pareto",
+        zorder=3,
+    )
 
     ax.set_xticks(x)
     ax.set_xticklabels(all_methods, rotation=45, ha="right")
     ax.set_ylabel("Average PV contribution (€ billions)")
-    ax.set_title("Aggregate PV Contribution by Method Across Runs")
+    ax.set_title(f"{title_prefix}Aggregate PV Contribution by Method Across Runs".strip(), pad=10)
     ax.yaxis.set_major_formatter(FuncFormatter(_format_billions))
     ax.legend()
 
     ymax = max(
-        [0.0] +
-        [m + s for m, s in zip(lg_means, lg_stds)] +
-        [m + s for m, s in zip(pareto_means, pareto_stds)]
+        [0.0]
+        + [m + s for m, s in zip(lg_means, lg_stds)]
+        + [m + s for m, s in zip(pareto_means, pareto_stds)]
     ) * 1.15
     ax.set_ylim(0, ymax if ymax > 0 else 1)
 
+    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
     plt.tight_layout()
-    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
 
     print(f"Saved aggregate method PV plot: {output_path}")
     print("Methods plotted:", all_methods)
     return output_path
+def plot_adjusted_pv_six_bars(values, errors, output_path,
+                              title="100-run Average Adjusted Net PV Decomposition"):
+    values_b = np.array(values, dtype=float) / 1e9
+    errors_b = np.array(errors, dtype=float) / 1e9
+
+    labels = [
+        "Lexicographic total",
+        "Lexicographic +",
+        "Lexicographic −",
+        "Pareto total",
+        "Pareto +",
+        "Pareto −",
+    ]
+
+    colors = [
+        "black", "dimgray", "lightgray",
+        "#d62728", "#ef6a6a", "#f6b0b0",
+    ]
+
+    x = np.arange(len(labels))
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+
+    bars = ax.bar(
+        x,
+        values_b,
+        yerr=errors_b,
+        capsize=5,
+        color=colors,
+        edgecolor="black",
+        linewidth=0.8,
+        error_kw={
+            "elinewidth": 1.2,
+            "capthick": 1.2,
+            "ecolor": "black",
+        },
+        zorder=3,
+    )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=25, ha="right")
+    ax.set_ylabel("Mean Adjusted PV (€ billions)")
+    ax.set_title(title, pad=10)
+    ax.yaxis.set_major_formatter(FuncFormatter(_format_billions))
+
+    ymax = max(values_b + errors_b) * 1.15 if len(values_b) else 1.0
+    ymin = min(0.0, np.min(values_b - errors_b) * 1.05)
+    ax.set_ylim(ymin, ymax)
+
+    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    for bar, v, e in zip(bars, values_b, errors_b):
+        y = bar.get_height()
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            y + e,
+            f"{v:,.2f}B",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved plot: {output_path}")
+    return output_path
+
+def plot_standard_macc_curve(results, storage_target, output_path):
+    """
+    Plot aggregate Lexicographic and Pareto MACC curves with ±1 std bands.
+    Curves are clipped to mean achieved cumulative removal.
+    """
+    x_lg, lg_mean, lg_std, lg_extent = aggregate_macc_curves(
+        results,
+        "lg_portfolio",
+        storage_target=storage_target,
+    )
+    x_p, p_mean, p_std, p_extent = aggregate_macc_curves(
+        results,
+        "pareto_portfolio",
+        storage_target=storage_target,
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Lexicographic
+    ax.step(
+        x_lg,
+        lg_mean,
+        where="post",
+        linewidth=2.2,
+        color="black",
+        label="Lexicographic",
+    )
+    ax.fill_between(
+        x_lg,
+        lg_mean - lg_std,
+        lg_mean + lg_std,
+        step="post",
+        color="black",
+        alpha=0.2,
+    )
+
+    # Pareto
+    ax.step(
+        x_p,
+        p_mean,
+        where="post",
+        linewidth=2.2,
+        color="#d62728",
+        label="Pareto",
+    )
+    ax.fill_between(
+        x_p,
+        p_mean - p_std,
+        p_mean + p_std,
+        step="post",
+        color="#d62728",
+        alpha=0.2,
+    )
+
+    xmax = max(lg_extent, p_extent)
+
+    ax.set_xlim(left=0, right=xmax if xmax > 0 else 1.0)
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
+    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)")
+    ax.set_title("Aggregate MACC Across Runs")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved aggregate MACC plot: {output_path}")
+    print(f"Lexicographic mean extent: {lg_extent:.2f} Gt")
+    print(f"Pareto mean extent: {p_extent:.2f} Gt")
+    return output_path
+
+
+    
+# --------------------------------------------------
+# Core simulation
+# --------------------------------------------------
+
 
 def run_single_seed(
+    viaCheck,
+    dataUse,
     seed,
     removal_target,
     SCC,
@@ -313,44 +1326,47 @@ def run_single_seed(
     region,
     EuropeanStoragePotential,
     NorthAmericanStoragePotential,
-    GlobalStoragePotential
+    GlobalStoragePotential,
+    debug=False,
 ):
-    # Generate portfolio
-    cdr_methods = generate_random_portfolio(pseed=seed)
+    if dataUse == "Survey":
+        cdr_methods = generate_random_portfolio(pseed=seed)
+    elif dataUse == "Rueda":
+        cdr_methods = generate_random_portfolioR(pseed=seed)
+    elif dataUse == "EU":
+        cdr_methods = generate_random_portfolioEU(pseed=seed)
+    elif dataUse == "EUR":
+        cdr_methods = generate_random_portfolioEUR(pseed=seed)
+    elif dataUse == "SurveyRange":
+        cdr_methods = generate_random_portfolioSR(pseed=seed)
+    else:
+        raise ValueError(f"Unknown dataUse: {dataUse}")
 
     current_year = removal_target["current_year"]
     start_year = removal_target["start_year"]
     storage_target = removal_target["storage_target"]
 
-    viable_methods = is_method_viable(
-        cdr_methods,
-        SCC,
-        SDR,
-        start_year=start_year,
-        duration_years=duration_years,
-        current_year=current_year
-    )
+    if viaCheck == True:
+        viable_methods = is_method_viable(
+            cdr_methods,
+            SCC,
+            SDR,
+            start_year=start_year,
+            duration_years=duration_years,
+            current_year=current_year,
+        )
+    elif viaCheck == False:
+        viable_methods = cdr_methods
 
-    # Choose storage potential by region
     if region == "Europe":
         sp = EuropeanStoragePotential
     elif region == "North America":
         sp = NorthAmericanStoragePotential
-    else:
+    elif region == "Global":
         sp = GlobalStoragePotential
 
     lg = lexicographic_opt_iterative(
-        SDR,
-        SCC,
-        start_year,
-        current_year,
-        viable_methods,
-        storage_target,
-        duration_years,
-        pass_storage_potential=sp
-    )
-
-    pareto = pareto_portfolio_iterative_layers(
+        viaCheck,
         SDR,
         SCC,
         start_year,
@@ -359,23 +1375,48 @@ def run_single_seed(
         storage_target,
         duration_years,
         pass_storage_potential=sp,
-        plot=False
     )
 
-    # Totals
+    pareto = pareto_portfolio_iterative_layers(
+        viaCheck,
+        SDR,
+        SCC,
+        start_year,
+        current_year,
+        viable_methods,
+        storage_target,
+        duration_years,
+        pass_storage_potential=sp,
+        plot=False,
+    )
+#total, totalPositive, totalNegative
     lg_total_pv = compute_total_pv(lg)
     p_total_pv = compute_total_pv(pareto)
+    lg_adj, lg_adj_pos, lg_adj_neg = compute_adjusted_total_pv(lg)
+    p_adj, p_adj_pos, p_adj_neg = compute_adjusted_total_pv(pareto)
 
-    # Externality-adjusted totals
-    lg_adj = compute_adjusted_total_pv(lg)
-    p_adj = compute_adjusted_total_pv(pareto)
+    if debug:
+        print(f"\nSeed {seed}")
+        print("Lexicographic:")
+        for e in lg or []:
+            m = e["method"]
+            print(m.mainType, m.subType, e["actual_contribution"], e["mac"])
+
+        print("Pareto:")
+        for e in pareto or []:
+            m = e["method"]
+            print(m.mainType, m.subType, e["actual_contribution"], e["mac"], e.get("round"))
 
     return {
         "seed": seed,
         "lg_total_pv": lg_total_pv,
         "pareto_total_pv": p_total_pv,
         "lg_adj_pv": lg_adj,
+        "lg_adj_pos": lg_adj_pos,
+        "lg_adj_neg": lg_adj_neg,
         "pareto_adj_pv": p_adj,
+        "pareto_adj_pos": p_adj_pos,
+        "pareto_adj_neg": p_adj_neg,
         "lg_count": len(lg or []),
         "pareto_count": len(pareto or []),
         "lg_portfolio": lg or [],
@@ -384,6 +1425,8 @@ def run_single_seed(
 
 
 def run_100_simulations(
+    viaCheck,
+    dataUse,
     seeds,
     removal_target,
     SCC,
@@ -392,12 +1435,13 @@ def run_100_simulations(
     region,
     EuropeanStoragePotential,
     NorthAmericanStoragePotential,
-    GlobalStoragePotential
+    GlobalStoragePotential,
 ):
-    storage_target = removal_target["storage_target"]
     results = []
     for seed in seeds:
         res = run_single_seed(
+            viaCheck=viaCheck,
+            dataUse=dataUse,
             seed=seed,
             removal_target=removal_target,
             SCC=SCC,
@@ -406,61 +1450,75 @@ def run_100_simulations(
             region=region,
             EuropeanStoragePotential=EuropeanStoragePotential,
             NorthAmericanStoragePotential=NorthAmericanStoragePotential,
-            GlobalStoragePotential=GlobalStoragePotential
+            GlobalStoragePotential=GlobalStoragePotential,
         )
         results.append(res)
 
-    # Arrays
     lg_vals = np.array([r["lg_total_pv"] for r in results], dtype=float)
     p_vals = np.array([r["pareto_total_pv"] for r in results], dtype=float)
-
     lg_adj_vals = np.array([r["lg_adj_pv"] for r in results], dtype=float)
     p_adj_vals = np.array([r["pareto_adj_pv"] for r in results], dtype=float)
+    lg_adj_pos_vals = np.array([r["lg_adj_pos"] for r in results], dtype=float)
+    lg_adj_neg_vals = np.array([r["lg_adj_neg"] for r in results], dtype=float)
+    p_adj_pos_vals = np.array([r["pareto_adj_pos"] for r in results], dtype=float)
+    p_adj_neg_vals = np.array([r["pareto_adj_neg"] for r in results], dtype=float)
 
-    # Means
-    lg_mean = lg_vals.mean()
-    p_mean = p_vals.mean()
-    lg_adj_mean = lg_adj_vals.mean()
-    p_adj_mean = p_adj_vals.mean()
+    lg_mean, p_mean = lg_vals.mean(), p_vals.mean()
+    lg_adj_mean, p_adj_mean = lg_adj_vals.mean(), p_adj_vals.mean()
+    lg_adj_pos_mean, lg_adj_pos_std = lg_adj_pos_vals.mean(), lg_adj_pos_vals.std(ddof=1)
+    lg_adj_neg_mean, lg_adj_neg_std = lg_adj_neg_vals.mean(), lg_adj_neg_vals.std(ddof=1)
+    p_adj_pos_mean, p_adj_pos_std = p_adj_pos_vals.mean(), p_adj_pos_vals.std(ddof=1)
+    p_adj_neg_mean, p_adj_neg_std = p_adj_neg_vals.mean(), p_adj_neg_vals.std(ddof=1)
 
-    # Std dev
-    lg_std = lg_vals.std(ddof=1)
-    p_std = p_vals.std(ddof=1)
-    lg_adj_std = lg_adj_vals.std(ddof=1)
-    p_adj_std = p_adj_vals.std(ddof=1)
+    lg_std, p_std = lg_vals.std(ddof=1), p_vals.std(ddof=1)
+    lg_adj_std, p_adj_std = lg_adj_vals.std(ddof=1), p_adj_vals.std(ddof=1)
 
-    output_dir = "output"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_root = "with_VC_output" if viaCheck else "no_VC_output"
+    output_dir = os.path.join(output_root, f"run_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Graph 1: no externality
-    out1 = os.path.join(output_dir, "composite_avg_pv_net_no_externality.png")
+    out1 = os.path.join(output_dir, f"{dataUse}_composite_avg_pv_net_no_externality_{timestamp}.png")
     plot_bar_comparison(
         values=[lg_mean, p_mean],
         errors=[lg_std, p_std],
         labels=["Lexicographic", "Pareto"],
         ylabel="Mean Total PV (Net) (€ billions)",
         title="100-run Average Total Net PV (No Externality Adjustment)",
-        output_path=out1
+        output_path=out1,
     )
-
-    # Graph 2: externality-adjusted
-    out2 = os.path.join(output_dir, "composite_avg_pv_net_externality_adjusted.png")
-    plot_bar_comparison(
-        values=[lg_adj_mean, p_adj_mean],
-        errors=[lg_adj_std, p_adj_std],
-        labels=["Lexicographic", "Pareto"],
-        ylabel="Mean Total PV (Adjusted Net) (€ billions)",
-        title="100-run Average Total Net PV (Externality-Adjusted)",
-        output_path=out2
-    )
-
-    # Graph 3: aggregate PV contribution by method
-    out3 = os.path.join(output_dir, "aggregate_pv_contribution_by_method.png")
+    out2b = os.path.join(output_dir,f"{dataUse}_composite_avg_pv_net_externality_decomposition_{timestamp}.png")
+    plot_adjusted_pv_six_bars(
+    values=[
+        lg_adj_mean,
+        lg_adj_pos_mean,
+        lg_adj_neg_mean,
+        p_adj_mean,
+        p_adj_pos_mean,
+        p_adj_neg_mean,
+    ],
+    errors=[
+        lg_adj_std,
+        lg_adj_pos_std,
+        lg_adj_neg_std,
+        p_adj_std,
+        p_adj_pos_std,
+        p_adj_neg_std,
+    ],
+    output_path=out2b,
+    title="100-run Average Adjusted Net PV: Total, Positive, and Negative Components",)
+    out3 = os.path.join(output_dir, f"{dataUse}_aggregate_pv_contribution_by_method_{timestamp}.png")
     plot_aggregate_method_pv(results, out3)
-
-     # Graph 4: aggregate MACC curves
-    out4 = os.path.join(output_dir, "aggregate_macc_curves.png")
-    plot_aggregate_macc_curve(results, storage_target, out4)
+    out3b = os.path.join(output_dir, f"{dataUse}_aggregate_removal_by_method_{timestamp}.png")
+    plot_aggregate_method_removal(results, out3b)
+    out4_structural = os.path.join(output_dir,f"{dataUse}_aggregate_structural_macc_{timestamp}.png")
+    plot_structural_macc_curve(results, out4_structural)
+    out4_standard = os.path.join(output_dir,f"{dataUse}_aggregate_standard_macc_{timestamp}.png")
+    plot_standard_macc_curve(results,storage_target=removal_target["storage_target"],output_path=out4_standard)
+    out5 = os.path.join(output_dir, f"{dataUse}_aggregate_pareto_scatter_{timestamp}.png")
+    plot_aggregate_pareto_scatter(results, out5)
+    out6 = os.path.join(output_dir, f"{dataUse}_aggregate_lexicographic_scatter_{timestamp}.png")
+    plot_aggregate_lexicographic_scatter(results, out6)
 
     return {
         "results": results,
@@ -474,8 +1532,11 @@ def run_100_simulations(
             "lg_adj_std": lg_adj_std,
             "pareto_adj_std": p_adj_std,
             "out_no_externality": out1,
-            "out_externality": out2,
+            "out_externality_decomposition": out2b,
             "out_method_pv_contribution": out3,
-            "out_aggregate_macc": out4,
-        }
+            "out_structural_macc": out4_structural,
+            "out_standard_macc": out4_standard,
+            "out_aggregate_pareto_scatter": out5,
+            "out_aggregate_lexicographic_scatter": out6,
+        },
     }
