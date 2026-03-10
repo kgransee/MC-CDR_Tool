@@ -32,25 +32,39 @@ def generate_random_portfolioSR(pseed):
         "OF": (-83,93)
     }
     scaled_side_effects = {k: (v[0] / 100.0, v[1] / 100.0) for k, v in raw_side_effects.items()}
-    removal_max = {
+    removal_max = {     #all numbers from Rueda et al. 2021 use peak potential, not 2050 potential. 
         "AR": (0.5,3.6), #Rueda et al. 2021
         "SCS": (2,5), #Rueda et al. 2021
         "Biochar": (0.5,2), #Rueda et al. 2021
         "BECCS": (0.5,5), #Rueda et al. 2021
-        "DACCS": (0.5,7),#Rueda et al. 2021
-        "ERW": (2.5,5),#Rueda et al. 2021
-       # "PWR": .250, 
-       # "BC": .025, 
+        "DACCS": (0.7,7),#Rueda et al. 2021
+        "ERW": (2.5,5),#Rueda et al. 2021 
         "OAE": (.1,10), #Fuss et al. 2018
         "OF": (0.000152,98) #Fuss et al. 2018
     }
 
+    """""
+       Method        n  mean median    sd   min    q1    q3   max
+       1 AR          6 1502.   1500 1376.     1 258.   2750  3000
+       2 DACCS       5 1201.   1000 1642.     1   5    1000  4000
+       3 ERW         6 1084.   1000 1020.     1 253    1750  2500
+       4 BECCS       6 1004.    750 1044.     1 144.   1750  2500
+       5 Biochar     6  835.    750  929.     1 132.   1000  2500
+       6 SCS         6  667.    250  975.     1  26.5   850  2500
+       7 OAE         5  622    1000  519.    10 100    1000  1000
+       8 OF          3  370     100  547.    10  55     550  1000
+       9 BC          4  325.    150  457.     1  75.2   400  1000
+      10 PWR         5  240.    100  428.     1   1     100  1000
+"""""
     removal_SEmax = {
-        "AR": 1.500, "SCS": .250, "Biochar": .750, "BECCS": .750, "DACCS": 1.000,
-        "ERW": 1.000, 
-       # "PWR": .100,
-         # "BC": 2.150, 
-          "OAE": 1.000, "OF": .100
+        "AR": (.001,3000), 
+        "SCS": (.001,2500), 
+        "Biochar": (.001,2.500), 
+        "BECCS": (.001,2.5), 
+        "DACCS": (.001,4.0),
+        "ERW": (.001,2.5), 
+        "OAE": (.01,1.0), 
+        "OF": (.01,1.0)
     }
 
     storage_types = {
@@ -88,9 +102,11 @@ def generate_random_portfolioSR(pseed):
         low, high = cost_ranges[main]
         lowr, highr = removal_max[main]
         lows, highs = scaled_side_effects[main]
+        lowsm, highsm = removal_SEmax[main]
         mac = float(rng.uniform(low, high))
         maxRemove=float(rng.uniform(lowr,highr))
         scaledSideEffects=float(rng.uniform(lows,highs))
+        sideEffectMax=float(rng.uniform(lowsm,highsm))
 
         portfolio.append(
             CDRMethod(
@@ -101,7 +117,7 @@ def generate_random_portfolioSR(pseed):
                 initialCost=0.0,
                 storageType=storage_types[main],
                 sideEffect=scaledSideEffects,
-                sideEffectMax=float(removal_SEmax[main])
+                sideEffectMax=sideEffectMax
             )
         )
 

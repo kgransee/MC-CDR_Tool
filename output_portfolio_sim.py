@@ -1,40 +1,75 @@
 
 #helper function to be called by both pareto and lexio iterative functions
-def _compute_pv_net(viaCheck, method, actual_contribution, SDR, SCC, start_year, current_year, duration_years):
-    """
-    Compute present-value net benefit for the implemented contribution.
-    """
+def _compute_pv_net(
+    viaCheck,
+    method,
+    actual_contribution,
+    SDR,
+    SCC,
+    start_year,
+    current_year,
+    duration_years,
+):
     if viaCheck:
         annual_gt = min(float(method.maxRemove), float(method.sideEffectMax))
     else:
         annual_gt = float(method.maxRemove)
+
     if annual_gt <= 0 or actual_contribution <= 0:
-        return 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
 
     r = float(SDR) / 100.0
     gt_to_t = 1e9
     net_per_ton = float(SCC) - float(method.mac)
+    se = float(getattr(method, "sideEffect", 0.0))
 
-    pv_net = 0.0
+    pv_climate_benefit = 0.0
+    pv_externality = 0.0
+    pv_positive_externality = 0.0
+    pv_negative_externality = 0.0
+
     remaining_gt = float(actual_contribution)
     y = 0
 
     while remaining_gt > 0 and y < duration_years:
         year = start_year + y
         t = year - current_year
+
         if t < 0:
             y += 1
             continue
 
-        implemented_gt = annual_gt if remaining_gt >= annual_gt else remaining_gt
+        implemented_gt = min(annual_gt, remaining_gt)
         remaining_gt -= implemented_gt
 
-        discount_factor = (1 + r) ** t
         tons = implemented_gt * gt_to_t
-        pv_net += (tons * net_per_ton) / discount_factor
+        annual_climate_benefit = tons * net_per_ton
+        annual_externality = annual_climate_benefit * se
+
+        discount_factor = (1 + r) ** t
+
+        discounted_climate = annual_climate_benefit / discount_factor
+        discounted_externality = annual_externality / discount_factor
+
+        pv_climate_benefit += discounted_climate
+        pv_externality += discounted_externality
+
+        if discounted_externality >= 0:
+            pv_positive_externality += discounted_externality
+        else:
+            pv_negative_externality += discounted_externality
+
         y += 1
 
-    return pv_net
+    pv_social_net_benefit = pv_climate_benefit + pv_externality
+
+    return (
+        pv_climate_benefit,
+        pv_externality,
+        pv_social_net_benefit,
+        pv_positive_externality,
+        pv_negative_externality,
+    )
 
 
 def _pareto_front(methods):
@@ -170,16 +205,22 @@ def lexicographic_opt_iterative(
 
         actual_contribution = min(actual_contribution, remaining_capacity)
 
-        pv_net = _compute_pv_net(
-            viaCheck=viaCheck,
-            method=lg_candidate,
-            actual_contribution=actual_contribution,
-            SDR=SDR,
-            SCC=SCC,
-            start_year=start_year,
-            current_year=current_year,
-            duration_years=duration_years,
-        )
+        (
+            pv_climate_benefit,
+            pv_externality,
+            pv_social_net_benefit,
+            pv_positive_externality,
+            pv_negative_externality,
+        ) = _compute_pv_net(
+        viaCheck=viaCheck,
+        method=lg_candidate,
+        actual_contribution=actual_contribution,
+        SDR=SDR,
+        SCC=SCC,
+        start_year=start_year,
+        current_year=current_year,
+        duration_years=duration_years,
+    )
 
         if actual_contribution < contribution:
             partial = True
@@ -194,7 +235,11 @@ def lexicographic_opt_iterative(
             "actual_contribution": actual_contribution,
             "mac": float(lg_candidate.mac),
             "partial": partial,
-            "pv_net": pv_net,
+            "pv_climate_benefit": pv_climate_benefit,
+            "pv_externality": pv_externality,
+            "pv_social_net_benefit": pv_social_net_benefit,
+            "pv_positive_externality": pv_positive_externality,
+            "pv_negative_externality": pv_negative_externality,
         })
 
         remaining_methods.remove(lg_candidate)
@@ -260,16 +305,22 @@ def pareto_portfolio_iterative_layers(
                 contribution = float(m.maxRemove) * float(duration_years)
             partial = actual < contribution or installed >= storage_target
 
-            pv_net = _compute_pv_net(
-                viaCheck=viaCheck,
-                method=m,
-                actual_contribution=actual,
-                SDR=SDR,
-                SCC=SCC,
-                start_year=start_year,
-                current_year=current_year,
-                duration_years=duration_years,
-            )
+            (
+                pv_climate_benefit,
+                pv_externality,
+                pv_social_net_benefit,
+                pv_positive_externality,
+                pv_negative_externality,
+            ) = _compute_pv_net(
+            viaCheck=viaCheck,
+            method=m,
+            actual_contribution=actual,
+            SDR=SDR,
+            SCC=SCC,
+            start_year=start_year,
+            current_year=current_year,
+            duration_years=duration_years,
+        )
 
             portfolio.append({
                 "method": m,
@@ -277,7 +328,11 @@ def pareto_portfolio_iterative_layers(
                 "mac": float(m.mac),
                 "partial": partial,
                 "round": round_idx,
-                "pv_net": pv_net
+                "pv_climate_benefit": pv_climate_benefit,
+                "pv_externality": pv_externality,
+                "pv_social_net_benefit": pv_social_net_benefit,
+                "pv_positive_externality": pv_positive_externality,
+                "pv_negative_externality": pv_negative_externality,
             })
 
             if m in remaining:

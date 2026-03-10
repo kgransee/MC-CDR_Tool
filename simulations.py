@@ -2,7 +2,6 @@ import os
 from datetime import datetime
 from collections import defaultdict
 from data_gen_SurveyRange import *
-from data_gen_EURueda import *
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FuncFormatter
@@ -10,6 +9,7 @@ from data_gen_EU import *
 from cdr_viable import is_method_viable
 from data_gen import generate_random_portfolio
 from data_gen_Rueda import generate_random_portfolioR
+from adjustText import adjust_text
 from output_portfolio_sim import (
     lexicographic_opt_iterative,
     pareto_portfolio_iterative_layers,
@@ -147,35 +147,157 @@ def _step_fill_arrays(edges, mean_vals, std_vals):
     upper = y + s
     return x, lower, upper
 
+def _method_label(method):
+    return f"{method.mainType} | {method.subType}"
 
-def compute_total_pv(portfolio):
-    """Sum raw pv_net across a portfolio."""
-    return sum(float(e.get("pv_net", 0.0)) for e in (portfolio or []))
 
+def _aggregate_metric_by_method(results, metric_key):
+    aggregates = {
+        "Lexicographic": defaultdict(float),
+        "Pareto": defaultdict(float),
+    }
+
+    for result in results or []:
+        for entry in result.get("lg_portfolio", []):
+            method = entry["method"]
+            label = _method_label(method)
+            aggregates["Lexicographic"][label] += float(entry.get(metric_key, 0.0))
+
+        for entry in result.get("pareto_portfolio", []):
+            method = entry["method"]
+            label = _method_label(method)
+            aggregates["Pareto"][label] += float(entry.get(metric_key, 0.0))
+
+    return aggregates
+
+def plot_aggregate_method_social_decomposition(results, output_path):
+    climate_agg = _aggregate_metric_by_method(results, "pv_climate_benefit")
+    ext_agg = _aggregate_metric_by_method(results, "pv_externality")
+
+    all_methods = sorted(
+        set(climate_agg["Lexicographic"].keys())
+        | set(climate_agg["Pareto"].keys())
+        | set(ext_agg["Lexicographic"].keys())
+        | set(ext_agg["Pareto"].keys())
+    )
+
+    if not all_methods:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.set_title("Monte Carlo Aggregate Externality Decomposition by Method")
+        ax.set_ylabel("PV ($)")
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    lg_climate = np.array([climate_agg["Lexicographic"].get(m, 0.0) for m in all_methods], dtype=float)
+    p_climate = np.array([climate_agg["Pareto"].get(m, 0.0) for m in all_methods], dtype=float)
+
+    lg_ext = np.array([ext_agg["Lexicographic"].get(m, 0.0) for m in all_methods], dtype=float)
+    p_ext = np.array([ext_agg["Pareto"].get(m, 0.0) for m in all_methods], dtype=float)
+
+    lg_ext_pos = np.maximum(lg_ext, 0.0)
+    lg_ext_neg = np.minimum(lg_ext, 0.0)
+    p_ext_pos = np.maximum(p_ext, 0.0)
+    p_ext_neg = np.minimum(p_ext, 0.0)
+
+    x = np.arange(len(all_methods))
+    width = 0.38
+
+    fig, ax = plt.subplots(figsize=(max(12, len(all_methods) * 0.7), 8))
+
+    ax.bar(
+        x - width / 2,
+        lg_climate,
+        width,
+        label="Lexicographic Net Climate Benefit",
+        color="black",
+        edgecolor="black",
+        linewidth=0.8,
+    )
+    ax.bar(
+        x - width / 2,
+        lg_ext_pos,
+        width,
+        bottom=lg_climate,
+        label="Lexicographic Positive Externality",
+        color="dimgray",
+        edgecolor="black",
+        linewidth=0.8,
+    )
+    ax.bar(
+        x - width / 2,
+        lg_ext_neg,
+        width,
+        bottom=0,
+        label="Lexicographic Negative Externality",
+        color="lightgray",
+        edgecolor="black",
+        linewidth=0.8,
+    )
+
+    ax.bar(
+        x + width / 2,
+        p_climate,
+        width,
+        label="Pareto Net Climate Benefit",
+        color="#d62728",
+        edgecolor="black",
+        linewidth=0.8,
+    )
+    ax.bar(
+        x + width / 2,
+        p_ext_pos,
+        width,
+        bottom=p_climate,
+        label="Pareto Positive Externality",
+        color="#ff6b6b",
+        edgecolor="black",
+        linewidth=0.8,
+    )
+    ax.bar(
+        x + width / 2,
+        p_ext_neg,
+        width,
+        bottom=0,
+        label="Pareto Negative Externality",
+        color="#f4a3a3",
+        edgecolor="black",
+        linewidth=0.8,
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(all_methods, rotation=45, ha="right")
+    ax.set_ylabel("Discounted PV ($)")
+    ax.set_title("Monte Carlo Aggregate Externality Decomposition by Method")
+    ax.axhline(0, linewidth=1.0)
+    ax.legend(ncol=2)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 def compute_adjusted_total_pv(portfolio):
-    """
-    Sum externality-adjusted pv_net across a portfolio.
+    total_climate_benefit = 0.0
+    total_externality = 0.0
+    total_social_benefit = 0.0
+    total_positive_externality = 0.0
+    total_negative_externality = 0.0
 
-    Assumes method.sideEffect is already scaled to [-1, 1].
-    """
-    total_positive = 0.0
-    total_negative = 0.0
-    total = 0.0
-    for e in (portfolio or []):
-        m = e["method"]
-        pv = float(e.get("pv_net", 0.0))
-        se = float(getattr(m, "sideEffect", 0.0))
-        adjusted = pv + (pv * se)
+    for entry in portfolio or []:
+        total_climate_benefit += float(entry.get("pv_climate_benefit", 0.0))
+        total_externality += float(entry.get("pv_externality", 0.0))
+        total_social_benefit += float(entry.get("pv_social_net_benefit", 0.0))
+        total_positive_externality += float(entry.get("pv_positive_externality", 0.0))
+        total_negative_externality += float(entry.get("pv_negative_externality", 0.0))
 
-        total += adjusted
-
-        if se >= 0:
-            total_positive += adjusted
-        else:
-            total_negative += adjusted
-        
-    return total, total_positive, total_negative
+    return (
+        total_climate_benefit,
+        total_externality,
+        total_social_benefit,
+        total_positive_externality,
+        total_negative_externality,
+    )
 
 def aggregate_method_removal(results, portfolio_key):
     all_methods = set()
@@ -268,7 +390,7 @@ def aggregate_lexicographic_scatter_data(results):
 def plot_aggregate_lexicographic_scatter(
     results,
     output_path,
-    title="Aggregate Lexicographic Scatter by Average Selection Position",
+    title="Monte Carlo Aggregate Lexicographic Scatter by Average Selection Position",
 ):
     rows = aggregate_lexicographic_scatter_data(results)
     if not rows:
@@ -282,7 +404,6 @@ def plot_aggregate_lexicographic_scatter(
     s_raw = np.array([r["avg_contribution"] for r in rows], dtype=float)
     freq = np.array([r.get("selection_frequency", np.nan) for r in rows], dtype=float)
 
-    # keep rows that have plottable coordinates
     valid_xy = np.isfinite(x) & np.isfinite(y)
     if not np.any(valid_xy):
         print("No valid aggregate lexicographic scatter data to plot.")
@@ -295,7 +416,6 @@ def plot_aggregate_lexicographic_scatter(
     s_raw = s_raw[valid_xy]
     freq = freq[valid_xy]
 
-    # size scaling
     max_s = np.nanmax(s_raw) if np.any(np.isfinite(s_raw)) else 0.0
     sizes = (
         100 + 900 * (s_raw / max_s)
@@ -305,7 +425,6 @@ def plot_aggregate_lexicographic_scatter(
 
     fig, ax = plt.subplots(figsize=(10, 7))
 
-    # methods with a defined average position
     ranked_mask = np.isfinite(c)
 
     if np.any(ranked_mask):
@@ -324,16 +443,10 @@ def plot_aggregate_lexicographic_scatter(
         cbar = plt.colorbar(sc, ax=ax)
         cbar.set_label("Average Implemented Lexicographic Selection Position")
 
-        # cleaner ticks for ordinal rank values
         tick_max = int(np.ceil(vmax))
         if tick_max >= 1:
             cbar.set_ticks(np.arange(1, tick_max + 1))
 
-    else:
-        sc = None
-
-    # methods that never got a valid rank (avg_position = NaN)
-    # this usually means never implemented / never selected
     unranked_mask = ~ranked_mask
     if np.any(unranked_mask):
         ax.scatter(
@@ -346,27 +459,33 @@ def plot_aggregate_lexicographic_scatter(
         )
         ax.legend()
 
-    offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
+    texts = []
     for i, method in enumerate(methods):
-        dx, dy = offsets[i % len(offsets)]
-
-        # append frequency so non-implementation is visible in the label too
-        label = method
-        if np.isfinite(freq[i]):
-            label = f"{method} ({freq[i]:.0%})"
-
-        ax.annotate(
-            label,
-            xy=(x[i], y[i]),
-            xytext=(dx, dy),
-            textcoords="offset points",
-            ha="center",
-            va="center",
-            fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85),
+        label = f"{method} ({freq[i]:.0%})"
+        texts.append(
+            ax.text(
+                x[i],
+                y[i],
+                label,
+                fontsize=9,
+                ha="center",
+                va="center",
+                bbox=dict(
+                    boxstyle="round,pad=0.2",
+                    fc="white",
+                    ec="none",
+                    alpha=0.85,
+                ),
+            )
         )
 
-    ax.set_xlabel("Average MAC (€/tCO₂)")
+    adjust_text(
+        texts,
+        ax=ax,
+        arrowprops=dict(arrowstyle="-", color="gray", lw=0.8),
+    )
+
+    ax.set_xlabel("Average MAC ($/tCO₂)")
     ax.set_ylabel("Average Side Effect")
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
@@ -376,7 +495,6 @@ def plot_aggregate_lexicographic_scatter(
     plt.close()
     print(f"Saved aggregate lexicographic scatter plot: {output_path}")
     return output_path
-
 
 def aggregate_pareto_scatter_data(results):
     method_mac = defaultdict(list)
@@ -440,7 +558,7 @@ def aggregate_pareto_scatter_data(results):
 def plot_aggregate_pareto_scatter(
     results,
     output_path,
-    title="Aggregate Implemented Pareto Scatter by Average Layer",
+    title="Monte Carlo Aggregate Pareto Scatter by Average Implemented Layer",
 ):
     rows = aggregate_pareto_scatter_data(results)
     if not rows:
@@ -454,7 +572,6 @@ def plot_aggregate_pareto_scatter(
     s_raw = np.array([r["avg_contribution"] for r in rows], dtype=float)
     freq = np.array([r.get("selection_frequency", np.nan) for r in rows], dtype=float)
 
-    # keep only rows with plottable coordinates
     valid_xy = np.isfinite(x) & np.isfinite(y)
     if not np.any(valid_xy):
         print("No valid aggregate Pareto scatter data to plot.")
@@ -467,7 +584,6 @@ def plot_aggregate_pareto_scatter(
     s_raw = s_raw[valid_xy]
     freq = freq[valid_xy]
 
-    # size scaling
     max_s = np.nanmax(s_raw) if np.any(np.isfinite(s_raw)) else 0.0
     sizes = (
         100 + 900 * (s_raw / max_s)
@@ -477,11 +593,11 @@ def plot_aggregate_pareto_scatter(
 
     fig, ax = plt.subplots(figsize=(10, 7))
 
-    # methods with a defined average Pareto layer
     ranked_mask = np.isfinite(c)
 
     if np.any(ranked_mask):
         vmax = np.nanmax(c[ranked_mask])
+
         sc = ax.scatter(
             x[ranked_mask],
             y[ranked_mask],
@@ -496,12 +612,10 @@ def plot_aggregate_pareto_scatter(
         cbar = plt.colorbar(sc, ax=ax)
         cbar.set_label("Average Implemented Pareto Layer")
 
-        # cleaner integer ticks for layers
         tick_max = int(np.ceil(vmax))
         if tick_max >= 1:
             cbar.set_ticks(np.arange(1, tick_max + 1))
 
-    # methods with no valid layer (never implemented / never selected)
     unranked_mask = ~ranked_mask
     if np.any(unranked_mask):
         ax.scatter(
@@ -514,26 +628,39 @@ def plot_aggregate_pareto_scatter(
         )
         ax.legend()
 
-    offsets = [(8, 8), (8, -10), (-12, 8), (-12, -10), (12, 0), (-14, 0)]
+    # ---------- automatic label placement ----------
+    texts = []
     for i, method in enumerate(methods):
-        dx, dy = offsets[i % len(offsets)]
 
         label = method
         if np.isfinite(freq[i]):
             label = f"{method} ({freq[i]:.0%})"
 
-        ax.annotate(
-            label,
-            xy=(x[i], y[i]),
-            xytext=(dx, dy),
-            textcoords="offset points",
-            ha="center",
-            va="center",
-            fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85),
+        texts.append(
+            ax.text(
+                x[i],
+                y[i],
+                label,
+                fontsize=9,
+                ha="center",
+                va="center",
+                bbox=dict(
+                    boxstyle="round,pad=0.2",
+                    fc="white",
+                    ec="none",
+                    alpha=0.85,
+                ),
+            )
         )
 
-    ax.set_xlabel("Average MAC (€/tCO₂)")
+    adjust_text(
+        texts,
+        ax=ax,
+        arrowprops=dict(arrowstyle="-", color="gray", lw=0.8),
+    )
+    # -----------------------------------------------
+
+    ax.set_xlabel("Average MAC ($/tCO₂)")
     ax.set_ylabel("Average Side Effect")
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
@@ -541,6 +668,7 @@ def plot_aggregate_pareto_scatter(
     plt.tight_layout()
     plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()
+
     print(f"Saved aggregate Pareto scatter plot: {output_path}")
     return output_path
 
@@ -900,8 +1028,8 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
     ax.set_ylim(bottom=0, top=ymax if ymax > 0 else 1.0)
     ax.margins(x=0)
     ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
-    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)")
-    ax.set_title(f"{title_prefix}Aggregate MACC Across Runs".strip())
+    ax.set_ylabel("Marginal Abatement Cost ($/tCO₂)")
+    ax.set_title(f"{title_prefix}Average MACC Across Monte Carlo Runs".strip())
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -975,29 +1103,6 @@ def plot_bar_comparison(values, errors, labels, ylabel, title, output_path):
     print(f"Saved plot: {output_path}")
     print(f"Y-axis range: {ymin:,.2f}B to {ymax:,.2f}B")
 
-
-def aggregate_method_pv(results, portfolio_key):
-    all_methods = set()
-    for r in results:
-        portfolio = r.get(portfolio_key, []) or []
-        for e in portfolio:
-            all_methods.add(extract_method_name(e["method"]))
-
-    all_methods = sorted(all_methods)
-    method_totals = {method_name: [] for method_name in all_methods}
-
-    for r in results:
-        portfolio = r.get(portfolio_key, []) or []
-        run_totals = {method_name: 0.0 for method_name in all_methods}
-
-        for e in portfolio:
-            method_name = extract_method_name(e["method"])
-            run_totals[method_name] += float(e.get("pv_net", 0.0))
-
-        for method_name in all_methods:
-            method_totals[method_name].append(run_totals[method_name])
-
-    return method_totals
 
 def plot_aggregate_method_removal(results, output_path, title_prefix=""):
     lg_totals = aggregate_method_removal(results, "lg_portfolio")
@@ -1081,116 +1186,33 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
     print("Methods plotted:", all_methods)
     return output_path
 
-
-def plot_aggregate_method_pv(results, output_path, title_prefix=""):
-    lg_totals = aggregate_method_pv(results, "lg_portfolio")
-    pareto_totals = aggregate_method_pv(results, "pareto_portfolio")
-
-    all_methods = sorted(set(lg_totals.keys()) | set(pareto_totals.keys()))
-    lg_means, lg_stds, pareto_means, pareto_stds = [], [], [], []
-
-    for method in all_methods:
-        lg_vals = np.array(lg_totals.get(method, []), dtype=float)
-        p_vals = np.array(pareto_totals.get(method, []), dtype=float)
-
-        lg_means.append(lg_vals.mean() / 1e9 if lg_vals.size else 0.0)
-        pareto_means.append(p_vals.mean() / 1e9 if p_vals.size else 0.0)
-        lg_stds.append(lg_vals.std(ddof=1) / 1e9 if lg_vals.size > 1 else 0.0)
-        pareto_stds.append(p_vals.std(ddof=1) / 1e9 if p_vals.size > 1 else 0.0)
-
-    x = np.arange(len(all_methods))
-    width = 0.38
-
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-
-    ax.bar(
-        x - width / 2,
-        lg_means,
-        width,
-        yerr=lg_stds,
-        capsize=5,
-        color="black",
-        edgecolor="black",
-        linewidth=0.8,
-        error_kw={
-            "elinewidth": 1.2,
-            "capthick": 1.2,
-            "ecolor": "black",
-        },
-        label="Lexicographic",
-        zorder=3,
-    )
-
-    ax.bar(
-        x + width / 2,
-        pareto_means,
-        width,
-        yerr=pareto_stds,
-        capsize=5,
-        color="#d62728",
-        edgecolor="black",
-        linewidth=0.8,
-        error_kw={
-            "elinewidth": 1.2,
-            "capthick": 1.2,
-            "ecolor": "black",
-        },
-        label="Pareto",
-        zorder=3,
-    )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(all_methods, rotation=45, ha="right")
-    ax.set_ylabel("Average PV contribution (€ billions)")
-    ax.set_title(f"{title_prefix}Aggregate PV Contribution by Method Across Runs".strip(), pad=10)
-    ax.yaxis.set_major_formatter(FuncFormatter(_format_billions))
-    ax.legend()
-
-    ymax = max(
-        [0.0]
-        + [m + s for m, s in zip(lg_means, lg_stds)]
-        + [m + s for m, s in zip(pareto_means, pareto_stds)]
-    ) * 1.15
-    ax.set_ylim(0, ymax if ymax > 0 else 1)
-
-    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    print(f"Saved aggregate method PV plot: {output_path}")
-    print("Methods plotted:", all_methods)
-    return output_path
-def plot_adjusted_pv_six_bars(values, errors, output_path,
-                              title="100-run Average Adjusted Net PV Decomposition"):
-    values_b = np.array(values, dtype=float) / 1e9
-    errors_b = np.array(errors, dtype=float) / 1e9
-
+def plot_adjusted_pv_six_bars(values, errors, output_path, title):
     labels = [
-        "Lexicographic total",
-        "Lexicographic +",
-        "Lexicographic −",
-        "Pareto total",
-        "Pareto +",
-        "Pareto −",
-    ]
-
-    colors = [
-        "black", "dimgray", "lightgray",
-        "#d62728", "#ef6a6a", "#f6b0b0",
+        "Lexicographic\nTotal Social Net PV",
+        "Lexicographic\nPositive Ext.",
+        "Lexicographic\nNegative Ext.",
+        "Pareto\nTotal Social Net PV",
+        "Pareto\nPositive Ext.",
+        "Pareto\nNegative Ext.",
     ]
 
     x = np.arange(len(labels))
+    values = np.array(values, dtype=float)
+    errors = np.array(errors, dtype=float)
 
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-
-    bars = ax.bar(
+    fig, ax = plt.subplots(figsize=(12, 7))
+    colors = [
+        "black",      # Lexicographic total social PV
+        "dimgray",    # Lexicographic positive ext
+        "lightgray",  # Lexicographic negative ext
+        "#d62728",    # Pareto total social PV
+        "#ff6b6b",    # Pareto positive ext
+        "#f4a3a3",    # Pareto negative ext
+    ]
+    ax.bar(
         x,
-        values_b,
-        yerr=errors_b,
+        values,
+        yerr=errors,
         capsize=5,
         color=colors,
         edgecolor="black",
@@ -1200,40 +1222,31 @@ def plot_adjusted_pv_six_bars(values, errors, output_path,
             "capthick": 1.2,
             "ecolor": "black",
         },
-        zorder=3,
     )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=25, ha="right")
-    ax.set_ylabel("Mean Adjusted PV (€ billions)")
-    ax.set_title(title, pad=10)
-    ax.yaxis.set_major_formatter(FuncFormatter(_format_billions))
+    ax.set_xticklabels(labels, rotation=20, ha="right")
+    ax.set_ylabel("Mean PV ($)")
+    ax.set_title(title)
 
-    ymax = max(values_b + errors_b) * 1.15 if len(values_b) else 1.0
-    ymin = min(0.0, np.min(values_b - errors_b) * 1.05)
-    ax.set_ylim(ymin, ymax)
+    # zero reference line so negative bars are visually clear
+    ax.axhline(0, linewidth=1.0)
 
-    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    # allow room for negative and positive bars including error bars
+    lower = np.min(values - errors)
+    upper = np.max(values + errors)
 
-    for bar, v, e in zip(bars, values_b, errors_b):
-        y = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y + e,
-            f"{v:,.2f}B",
-            ha="center",
-            va="bottom",
-            fontsize=8,
-        )
+    if lower == upper:
+        pad = max(1.0, abs(lower) * 0.1)
+        ax.set_ylim(lower - pad, upper + pad)
+    else:
+        span = upper - lower
+        pad = span * 0.1
+        ax.set_ylim(lower - pad, upper + pad)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    print(f"Saved plot: {output_path}")
-    return output_path
+    plt.close(fig)
 
 def plot_standard_macc_curve(results, storage_target, output_path):
     """
@@ -1294,8 +1307,8 @@ def plot_standard_macc_curve(results, storage_target, output_path):
     ax.set_xlim(left=0, right=xmax if xmax > 0 else 1.0)
     ax.set_ylim(bottom=0)
     ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
-    ax.set_ylabel("Marginal Abatement Cost (€/tCO₂)")
-    ax.set_title("Aggregate MACC Across Runs")
+    ax.set_ylabel("Marginal Abatement Cost ($/tCO₂)")
+    ax.set_title("Mean MACC Across Monte Carlo Runs")
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -1303,12 +1316,77 @@ def plot_standard_macc_curve(results, storage_target, output_path):
     plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()
 
-    print(f"Saved aggregate MACC plot: {output_path}")
+    print(f"Saved Mean MACC Across Monte Carlo Runs: {output_path}")
     print(f"Lexicographic mean extent: {lg_extent:.2f} Gt")
     print(f"Pareto mean extent: {p_extent:.2f} Gt")
     return output_path
 
+def plot_aggregate_method_removal(results, output_path, title_prefix=""):
+    lg_totals = aggregate_method_removal(results, "lg_portfolio")
+    pareto_totals = aggregate_method_removal(results, "pareto_portfolio")
 
+    all_methods = sorted(set(lg_totals.keys()) | set(pareto_totals.keys()))
+    lg_means, lg_stds, pareto_means, pareto_stds = [], [], [], []
+
+    for method in all_methods:
+        lg_vals = np.array(lg_totals.get(method, []), dtype=float)
+        p_vals = np.array(pareto_totals.get(method, []), dtype=float)
+
+        lg_means.append(lg_vals.mean() if lg_vals.size else 0.0)
+        pareto_means.append(p_vals.mean() if p_vals.size else 0.0)
+
+        lg_stds.append(lg_vals.std(ddof=1) if lg_vals.size > 1 else 0.0)
+        pareto_stds.append(p_vals.std(ddof=1) if p_vals.size > 1 else 0.0)
+
+    x = np.arange(len(all_methods))
+    width = 0.38
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+
+    ax.bar(
+        x - width / 2,
+        lg_means,
+        width,
+        yerr=lg_stds,
+        capsize=5,
+        color="black",
+        edgecolor="black",
+        linewidth=0.8,
+        label="Lexicographic",
+    )
+
+    ax.bar(
+        x + width / 2,
+        pareto_means,
+        width,
+        yerr=pareto_stds,
+        capsize=5,
+        color="#d62728",
+        edgecolor="black",
+        linewidth=0.8,
+        label="Pareto",
+    )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(all_methods, rotation=45, ha="right")
+    ax.set_ylabel("Average Removal (Gt CO₂ per simulation)")
+    ax.set_title(f"{title_prefix}Average Removal by Method Across Runs".strip())
+    ax.legend()
+
+    ymax = max(
+        [0.0]
+        + [m + s for m, s in zip(lg_means, lg_stds)]
+        + [m + s for m, s in zip(pareto_means, pareto_stds)]
+    ) * 1.15
+
+    ax.set_ylim(0, ymax if ymax > 0 else 1)
+    ax.grid(axis="y", linestyle="--", alpha=0.35)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved aggregate removal plot: {output_path}")
     
 # --------------------------------------------------
 # Core simulation
@@ -1335,8 +1413,6 @@ def run_single_seed(
         cdr_methods = generate_random_portfolioR(pseed=seed)
     elif dataUse == "EU":
         cdr_methods = generate_random_portfolioEU(pseed=seed)
-    elif dataUse == "EUR":
-        cdr_methods = generate_random_portfolioEUR(pseed=seed)
     elif dataUse == "SurveyRange":
         cdr_methods = generate_random_portfolioSR(pseed=seed)
     else:
@@ -1389,34 +1465,36 @@ def run_single_seed(
         pass_storage_potential=sp,
         plot=False,
     )
-#total, totalPositive, totalNegative
-    lg_total_pv = compute_total_pv(lg)
-    p_total_pv = compute_total_pv(pareto)
-    lg_adj, lg_adj_pos, lg_adj_neg = compute_adjusted_total_pv(lg)
-    p_adj, p_adj_pos, p_adj_neg = compute_adjusted_total_pv(pareto)
 
-    if debug:
-        print(f"\nSeed {seed}")
-        print("Lexicographic:")
-        for e in lg or []:
-            m = e["method"]
-            print(m.mainType, m.subType, e["actual_contribution"], e["mac"])
+    (
+        lg_climate_pv,
+        lg_ext_climate_pv,
+        lg_total_adj,
+        lg_adj_pos_ext,
+        lg_adj_neg_ext,
+    ) = compute_adjusted_total_pv(lg)
 
-        print("Pareto:")
-        for e in pareto or []:
-            m = e["method"]
-            print(m.mainType, m.subType, e["actual_contribution"], e["mac"], e.get("round"))
+    (
+        p_climate_pv,
+        p_ext_climate_pv,
+        p_total_adj,
+        p_adj_pos_ext,
+        p_adj_neg_ext,
+    ) = compute_adjusted_total_pv(pareto)
+
 
     return {
         "seed": seed,
-        "lg_total_pv": lg_total_pv,
-        "pareto_total_pv": p_total_pv,
-        "lg_adj_pv": lg_adj,
-        "lg_adj_pos": lg_adj_pos,
-        "lg_adj_neg": lg_adj_neg,
-        "pareto_adj_pv": p_adj,
-        "pareto_adj_pos": p_adj_pos,
-        "pareto_adj_neg": p_adj_neg,
+        "lg_climate_pv": lg_climate_pv,
+        "lg_externality_pv": lg_ext_climate_pv,
+        "lg_adj_pv": lg_total_adj,
+        "lg_adj_pos": lg_adj_pos_ext,
+        "lg_adj_neg": lg_adj_neg_ext,
+        "pareto_climate_pv": p_climate_pv,
+        "pareto_externality_pv": p_ext_climate_pv,
+        "pareto_adj_pv": p_total_adj,
+        "pareto_adj_pos": p_adj_pos_ext,
+        "pareto_adj_neg": p_adj_neg_ext,
         "lg_count": len(lg or []),
         "pareto_count": len(pareto or []),
         "lg_portfolio": lg or [],
@@ -1454,89 +1532,133 @@ def run_100_simulations(
         )
         results.append(res)
 
-    lg_vals = np.array([r["lg_total_pv"] for r in results], dtype=float)
-    p_vals = np.array([r["pareto_total_pv"] for r in results], dtype=float)
+    lg_vals = np.array([r["lg_climate_pv"] for r in results], dtype=float)
+    p_vals = np.array([r["pareto_climate_pv"] for r in results], dtype=float)
+
     lg_adj_vals = np.array([r["lg_adj_pv"] for r in results], dtype=float)
     p_adj_vals = np.array([r["pareto_adj_pv"] for r in results], dtype=float)
+
     lg_adj_pos_vals = np.array([r["lg_adj_pos"] for r in results], dtype=float)
     lg_adj_neg_vals = np.array([r["lg_adj_neg"] for r in results], dtype=float)
     p_adj_pos_vals = np.array([r["pareto_adj_pos"] for r in results], dtype=float)
     p_adj_neg_vals = np.array([r["pareto_adj_neg"] for r in results], dtype=float)
 
     lg_mean, p_mean = lg_vals.mean(), p_vals.mean()
+    lg_std, p_std = lg_vals.std(ddof=1), p_vals.std(ddof=1)
+
     lg_adj_mean, p_adj_mean = lg_adj_vals.mean(), p_adj_vals.mean()
+    lg_adj_std, p_adj_std = lg_adj_vals.std(ddof=1), p_adj_vals.std(ddof=1)
+
     lg_adj_pos_mean, lg_adj_pos_std = lg_adj_pos_vals.mean(), lg_adj_pos_vals.std(ddof=1)
     lg_adj_neg_mean, lg_adj_neg_std = lg_adj_neg_vals.mean(), lg_adj_neg_vals.std(ddof=1)
     p_adj_pos_mean, p_adj_pos_std = p_adj_pos_vals.mean(), p_adj_pos_vals.std(ddof=1)
     p_adj_neg_mean, p_adj_neg_std = p_adj_neg_vals.mean(), p_adj_neg_vals.std(ddof=1)
 
-    lg_std, p_std = lg_vals.std(ddof=1), p_vals.std(ddof=1)
-    lg_adj_std, p_adj_std = lg_adj_vals.std(ddof=1), p_adj_vals.std(ddof=1)
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    storage_target = removal_target["storage_target"]
     output_root = "with_VC_output" if viaCheck else "no_VC_output"
-    output_dir = os.path.join(output_root, f"run_{timestamp}")
+    output_dir = os.path.join(output_root, f"{dataUse}_Region{region}_SCC{SCC}_SDR{SDR}_target{storage_target}Gt_output")
     os.makedirs(output_dir, exist_ok=True)
 
-    out1 = os.path.join(output_dir, f"{dataUse}_composite_avg_pv_net_no_externality_{timestamp}.png")
+    out1 = os.path.join(
+        output_dir,
+        f"{dataUse}_composite_avg_climate_benefit_pv_{timestamp}.png"
+    )
     plot_bar_comparison(
         values=[lg_mean, p_mean],
         errors=[lg_std, p_std],
         labels=["Lexicographic", "Pareto"],
-        ylabel="Mean Total PV (Net) (€ billions)",
-        title="100-run Average Total Net PV (No Externality Adjustment)",
+        ylabel="Mean Net Climate Benefit PV ($)",
+        title="100-run Average climate-Benefit PV",
         output_path=out1,
+        )
+
+    out2b = os.path.join(
+        output_dir,
+        f"{dataUse}_composite_avg_social_pv_externality_decomposition_{timestamp}.png"
     )
-    out2b = os.path.join(output_dir,f"{dataUse}_composite_avg_pv_net_externality_decomposition_{timestamp}.png")
     plot_adjusted_pv_six_bars(
-    values=[
-        lg_adj_mean,
-        lg_adj_pos_mean,
-        lg_adj_neg_mean,
-        p_adj_mean,
-        p_adj_pos_mean,
-        p_adj_neg_mean,
-    ],
-    errors=[
-        lg_adj_std,
-        lg_adj_pos_std,
-        lg_adj_neg_std,
-        p_adj_std,
-        p_adj_pos_std,
-        p_adj_neg_std,
-    ],
+        values=[
+            lg_adj_mean,
+            lg_adj_pos_mean,
+            lg_adj_neg_mean,
+            p_adj_mean,
+            p_adj_pos_mean,
+            p_adj_neg_mean,
+        ],
+        errors=[
+            lg_adj_std,
+            lg_adj_pos_std,
+            lg_adj_neg_std,
+            p_adj_std,
+            p_adj_pos_std,
+            p_adj_neg_std,
+        ],
     output_path=out2b,
-    title="100-run Average Adjusted Net PV: Total, Positive, and Negative Components",)
-    out3 = os.path.join(output_dir, f"{dataUse}_aggregate_pv_contribution_by_method_{timestamp}.png")
-    plot_aggregate_method_pv(results, out3)
-    out3b = os.path.join(output_dir, f"{dataUse}_aggregate_removal_by_method_{timestamp}.png")
-    plot_aggregate_method_removal(results, out3b)
-    out4_structural = os.path.join(output_dir,f"{dataUse}_aggregate_structural_macc_{timestamp}.png")
+    title="10,000-run Average Social Net Benefit PV and Externality Decomposition",
+    )
+
+    out3_decomp = os.path.join(
+        output_dir,
+        f"{dataUse}_aggregate_social_decomposition_by_method_{timestamp}.png"
+    )
+    plot_aggregate_method_social_decomposition(results, out3_decomp)
+
+    out4_structural = os.path.join(
+        output_dir,
+        f"{dataUse}_aggregate_structural_macc_{timestamp}.png"
+    )
     plot_structural_macc_curve(results, out4_structural)
-    out4_standard = os.path.join(output_dir,f"{dataUse}_aggregate_standard_macc_{timestamp}.png")
-    plot_standard_macc_curve(results,storage_target=removal_target["storage_target"],output_path=out4_standard)
-    out5 = os.path.join(output_dir, f"{dataUse}_aggregate_pareto_scatter_{timestamp}.png")
+
+    out4_standard = os.path.join(
+        output_dir,
+        f"{dataUse}_aggregate_standard_macc_{timestamp}.png"
+    )
+    plot_standard_macc_curve(
+        results,
+        storage_target=removal_target["storage_target"],
+        output_path=out4_standard,
+    )
+
+    out5 = os.path.join(
+        output_dir,
+        f"{dataUse}_aggregate_pareto_scatter_{timestamp}.png"
+    )
     plot_aggregate_pareto_scatter(results, out5)
-    out6 = os.path.join(output_dir, f"{dataUse}_aggregate_lexicographic_scatter_{timestamp}.png")
+
+    out6 = os.path.join(
+        output_dir,
+        f"{dataUse}_aggregate_lexicographic_scatter_{timestamp}.png"
+    )
     plot_aggregate_lexicographic_scatter(results, out6)
+    out_removal = os.path.join(
+        output_dir,
+        f"{dataUse}_aggregate_removal_by_method_{timestamp}.png"
+    )
+    plot_aggregate_method_removal(results, out_removal)
 
     return {
-        "results": results,
-        "summary": {
-            "lg_mean": lg_mean,
-            "pareto_mean": p_mean,
-            "lg_std": lg_std,
-            "pareto_std": p_std,
-            "lg_adj_mean": lg_adj_mean,
-            "pareto_adj_mean": p_adj_mean,
-            "lg_adj_std": lg_adj_std,
-            "pareto_adj_std": p_adj_std,
-            "out_no_externality": out1,
-            "out_externality_decomposition": out2b,
-            "out_method_pv_contribution": out3,
-            "out_structural_macc": out4_structural,
-            "out_standard_macc": out4_standard,
-            "out_aggregate_pareto_scatter": out5,
-            "out_aggregate_lexicographic_scatter": out6,
-        },
-    }
+    "results": results,
+    "summary": {
+        "lg_mean": lg_mean,
+        "pareto_mean": p_mean,
+        "lg_std": lg_std,
+        "pareto_std": p_std,
+        "lg_adj_mean": lg_adj_mean,
+        "pareto_adj_mean": p_adj_mean,
+        "lg_adj_std": lg_adj_std,
+        "pareto_adj_std": p_adj_std,
+        "lg_adj_pos_mean": lg_adj_pos_mean,
+        "lg_adj_neg_mean": lg_adj_neg_mean,
+        "pareto_adj_pos_mean": p_adj_pos_mean,
+        "pareto_adj_neg_mean": p_adj_neg_mean,
+        "out_climate_benefit": out1,
+        "out_social_decomposition": out2b,
+        "out_method_social_decomposition": out3_decomp,
+        "out_structural_macc": out4_structural,
+        "out_standard_macc": out4_standard,
+        "out_aggregate_pareto_scatter": out5,
+        "out_aggregate_lexicographic_scatter": out6,
+        "out_aggregate_method_removal": out_removal,
+    },
+}

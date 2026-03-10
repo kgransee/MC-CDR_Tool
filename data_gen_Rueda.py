@@ -46,7 +46,7 @@ def generate_random_portfolioR(pseed):
         "SCS": (2,5), 
         "Biochar": (0.5,2), 
         "BECCS": (0.5,5), 
-        "DACCS": (0.5,7),
+        "DACCS": (0.7,7),
         "ERW": (2.5,5)
     }
     #same, no side effect max in paper
@@ -69,7 +69,7 @@ def generate_random_portfolioR(pseed):
         "DACCS": "geological formations",
         "ERW": "minerals",
     }
-    #using minx et al 2018
+    #using minx et al 2018, in dollars 
     cost_ranges = {
         "AR": (5, 50),
         "SCS": (0, 100),

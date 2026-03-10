@@ -40,7 +40,7 @@ def generate_random_portfolio(pseed):
         "SCS": (2,5), #Rueda et al. 2021
         "Biochar": (0.5,2), #Rueda et al. 2021
         "BECCS": (0.5,5), #Rueda et al. 2021
-        "DACCS": (0.5,7),#Rueda et al. 2021
+        "DACCS": (0.7,7),#Rueda et al. 2021
         "ERW": (2.5,5),#Rueda et al. 2021
        # "PWR": .250, 
        # "BC": .025, 

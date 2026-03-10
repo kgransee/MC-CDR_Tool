@@ -36,7 +36,7 @@ def define_removal_target():
     #that the GCS limits are not exceeded
     while True:
         try:
-            storage_target = float(input("\nEnter the  cummulative geological storage target amount in gigatons(Gt): "))
+            storage_target = float(input("\nEnter the  cummulative removal target in gigatons(Gt): "))
             if storage_target > 0:
                 break
             else:

@@ -1,14 +1,12 @@
 from cdr_input import *
-from cdr_viable import check_storage_feasibility, read_storage_potential, is_method_viable
+from cdr_viable import check_storage_feasibility, read_storage_potential
 from define_removal_target import define_removal_target
 from data_gen import *
 from data_gen_Rueda import *
 from data_gen_EU import *
 from simulations import *
 from data_gen_Rueda import *
-from data_gen_EURueda import *
 from data_gen_SurveyRange import *
-
 
 def main():
     #step 0 is to define removal target
@@ -52,7 +50,6 @@ def main():
     dataUse = None
     sim_choice = None
     print("\nHow would you like to provide CDR methods?")
-    print("1. Enter methods manually")
     print("2. Import methods from an Excel file")
     print("3. Generate Global Portfolio (based on survey results)")
     print("4. Generate Global Portfolio (based on Rueda et al. 2021)")
@@ -60,23 +57,14 @@ def main():
     print("6. Generate EU Portfolio (based on Rueda et al. 2021 side impacts)")
     print("7. Generate Global Portfolio (based on survey results, use of range of side impact esitmates)")
     while True:
-        choice = input("Select an option (1-7): ").strip()
-        if choice in ("1", "2", "3", "4", "5", "6", "7"):
+        choice = input("Select an option (2-6): ").strip()
+        if choice in ("2", "3", "4", "5", "6"):
             break
-        print("Invalid selection. Please enter 1, 2, 3, 4, 5, 6, or 7.")
+        print("Invalid selection. Please enter 2, 3, 4, 5, or 6.")
     #manual Entry
-    if choice == "1":
-        while True:
-            method = get_cdr_from_user()
-            cdr_methods.append(method)
-            print("CDR Method added!")
-
-            again = input("Add another? (y/n): ").lower()
-            if again != 'y':
-                 break
 
     #Excel Import, file CDRInputs.xlsx is a template file with example CDR methods, users can modify this file and input their own methods, but they need to keep the same format for the code to work. The code will read the file and create CDR method objects based on the data in the file.
-    elif choice == "2":
+    if choice == "2":
         while True:
             filepath = input("Enter path to Excel file name: ").strip()
 
@@ -89,7 +77,7 @@ def main():
                 print(f"Failed to import Excel file: {e}")
 
     elif choice == "3":
-            print("\nGenerating global portfolio based on survey results...")
+            print("\nGenerate global portfolio based on survey results")
             print("a) Single run (one seed)")
             print("b) 1000-run simulation (fixed seed order for replication)")
             dataUse = "Survey"
@@ -101,11 +89,10 @@ def main():
 
             if sim_choice == "a":
                 seed = 13
-
                 cdr_methods = generate_random_portfolio(pseed=seed)
                 print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
     elif choice == "4":
-            print("\nGenerating global portfolio based on Rueda et al. 2021...")
+            print("\nGenerate global portfolio based on Rueda et al. 2021")
             print("a) Single run (one seed)")
             print("b) 1000-run simulation (fixed seed order for replication)")
             dataUse = "Rueda"
@@ -120,7 +107,7 @@ def main():
                 cdr_methods = generate_random_portfolioR(pseed=seed)
                 print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
     elif choice == "5":
-            print("\nGenerating EU portfolio...")
+            print("\nGenerate EU portfolio based on literature, EU Policy, and survey")
             print("a) Single run (one seed)")
             print("b) 10,000-run simulation")
             dataUse = "EU"
@@ -135,21 +122,6 @@ def main():
                 cdr_methods = generate_random_portfolioEU(pseed=seed)
                 print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
     elif choice == "6":
-            print("\nGenerating EU portfolio...")
-            print("a) Single run (one seed)")
-            print("b) 10,000-run simulation")
-            dataUse = "EUR"
-            while True:
-                sim_choice = input("Select (a/b): ").strip().lower()
-                if sim_choice in ("a", "b"):
-                    break
-                print("Invalid selection. Enter a or b.")
-
-            if sim_choice == "a":
-                seed = 13
-                cdr_methods = generate_random_portfolioEUR(pseed=seed)
-                print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
-    elif choice == "7":
             print("\nGenerating EU portfolio...")
             print("a) Single run (one seed)")
             print("b) 10,000-run simulation (fixed seed order for replication)")
@@ -171,7 +143,7 @@ def main():
     #define SCC
     while True:
         try:
-            SCC = float(input("Please define a value for the Social Cost of Carbon (SCC): "))
+            SCC = float(input("Define a value for the Social Cost of Carbon (SCC) in USD at the start of removals for the 15 year activity period: "))
             if SCC >= 0:
                 break
             else:
@@ -196,7 +168,7 @@ def main():
 
         print("SDR =", SDR)
 
-    if choice in ("3", "4", "5", "5", "6", "7") and sim_choice == "b":
+    if choice in ("3", "4", "5", "5", "6") and sim_choice == "b":
         seeds = list(range(1, 10001))
         seeds2 = list(range(1, 10001))
         #first simulations with viability check
@@ -227,55 +199,5 @@ def main():
             GlobalStoragePotential=GlobalStoragePotential
         )
         return  # stop main() here
-     
-    """""
-    #check which methods are viable based on the input values
-    current_year = removal_target["current_year"]
-    start_year = removal_target["start_year"]
-    duration_years = 15 #fixed duration period in line with new EU policy for BECCS and DACCS. Biochar activit period is 5 years. 
-    storage_target = removal_target["storage_target"]
-    viable_methods = is_method_viable(cdr_methods, SCC, SDR, start_year=start_year,
-        duration_years=duration_years, current_year=current_year)
-    
-    if viable_methods:
-        print("\n--- Viable CDR Methods ---")
-        for m in viable_methods:
-            print(
-                f"{m.mainType} ({m.subType}) | "
-                f"MAC: {m.mac} €/tCO₂ | "
-                f"Side-effect constrained max: {m.sideEffectMax:.2e} Gt |"
-                f"Discounted Social Benefit: {m.initial_discounted_benefit:.2e} € | "
-                f"Discounted Economic Cost: {m.initial_discounted_cost} € | "
-            )
-    else:
-        print("\nNo CDR methods are viable under the given parameters.")
-    #first code block deals with lexicographic optimization
-    if (region == "Europe"):
-        lg_dimensions = lexicographic_opt_iterative(SDR, SCC, start_year, current_year, viable_methods, storage_target, duration_years, pass_storage_potential = EuropeanStoragePotential)
-    elif (region == "North America"):
-        lg_dimensions = lexicographic_opt_iterative(SDR, SCC, start_year, current_year, viable_methods, storage_target, duration_years, pass_storage_potential = NorthAmericanStoragePotential)
-    elif(region == "Global"):
-        lg_dimensions = lexicographic_opt_iterative(SDR, SCC, start_year, current_year, viable_methods, storage_target, duration_years, pass_storage_potential = GlobalStoragePotential)
-    #MAC curve code block
-    if lg_dimensions:
-        marginal_abatement_cost_curve(lg_dimensions, storage_target, start_year, duration_years, SDR, current_year)
-    else:
-        print("No portfolio selected, skipping MAC curve.")
-
-    #now pareto optimization with iterative layers
-    if (region == "Europe"):
-        pareto_dimensions = pareto_portfolio_iterative_layers(SDR, SCC, start_year, current_year,viable_methods, storage_target, duration_years, pass_storage_potential = EuropeanStoragePotential)
-    elif (region == "North America"):
-        pareto_dimensions = pareto_portfolio_iterative_layers(SDR, SCC, start_year, current_year,viable_methods, storage_target, duration_years, pass_storage_potential = NorthAmericanStoragePotential)
-    elif(region == "Global"):
-        pareto_dimensions = pareto_portfolio_iterative_layers(SDR, SCC, start_year, current_year,viable_methods, storage_target, duration_years, pass_storage_potential = GlobalStoragePotential)
-    #now pareto MACC
-    if pareto_dimensions:
-        marginal_abatement_cost_curve_pareto(pareto_dimensions, storage_target, start_year, duration_years, SDR, current_year)
-    else:
-        print("No portfolio selected, skipping MAC curve.")
-
-    plot_total_pv_net_lg_vs_pareto(lg_dimensions, pareto_dimensions)
-    """""
 if __name__ == "__main__":
     main()
