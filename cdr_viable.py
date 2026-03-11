@@ -81,48 +81,13 @@ def is_method_viable(cdr_methods, SCC, SDR, start_year, duration_years, current_
             continue
         #economic viability check based on the MAC and SCC, if the cost per ton is higher than the social benefit per ton, then the method is not viable
         #this puts dependence on the evaluation of the SCC, a potential low evaluation would then make less methods viable
-        if MAC >= SCC:
+        if MAC > SCC:
             print(f"{name} is not viable: MAC ≥ SCC.")
             continue
-
-        annual_tons = annual_gt * GT_TO_T
-
-        initial_discounted_benefit = 0.0
-        initial_discounted_cost = 0.0
-        #calculate discounted benefit over the activity period, 
-        for y in range(duration_years):
-            year = start_year + y
-            t = year - current_year
-
-            if t < 0:
-                print(f"Warning: {name} has removals in the past ({year}). Skipping.")
-                continue
-            r = float(SDR) / 100.0
-            discount_factor = (1 + r) ** t
-            #annual tons assumption made, based on requirment that activity period requires  estimates of total carbon removals
-            yearly_benefit = annual_tons * SCC
-            yearly_cost = annual_tons * MAC
-
-            initial_discounted_benefit += yearly_benefit / discount_factor
-            initial_discounted_cost += yearly_cost / discount_factor
-
-            #initial cost is added at the start year (t=0), so no discounting needed
-            #initial_discounted_cost += initial_cost
-
-        # Economic feasibility check:
-        #this presents the theoretical implemetnation, but it may result that actual implemenation is less than
-        #the absence of initial costs is problematic in the inital activity period, 
-        #but the initial costs may be subsid\ized in some way or matter in which the received benefits may compensate over time
-        if initial_discounted_benefit >= initial_discounted_cost:
-            m.initial_discounted_benefit = initial_discounted_benefit
-            m.initial_discounted_cost = initial_discounted_cost
+        
+        if MAC <= SCC:
             viable_methods.append(m)
-        else:
-            print(
-                f"{name} not viable: "
-                f"NPV benefit ({m.initial_discounted_benefit:.2e}) < "
-                f"NPV cost ({m.initial_discounted_cost:.2e})"
-            )
+
 
     return viable_methods
 

@@ -57,9 +57,9 @@ def generate_random_portfolioSR(pseed):
       10 PWR         5  240.    100  428.     1   1     100  1000
 """""
     removal_SEmax = {
-        "AR": (.001,3000), 
-        "SCS": (.001,2500), 
-        "Biochar": (.001,2.500), 
+        "AR": (.001,3.0), 
+        "SCS": (.001,2.5), 
+        "Biochar": (.001,2.5), 
         "BECCS": (.001,2.5), 
         "DACCS": (.001,4.0),
         "ERW": (.001,2.5), 
@@ -90,7 +90,7 @@ def generate_random_portfolioSR(pseed):
        # "PWR": (0, 45), # Niemi et al 2024 https://www.sciencedirect.com/science/article/pii/S0264837724002825
         #"BC": (10, 50), #using NOAA data https://sciencecouncil.noaa.gov/wp-content/uploads/2023/06/mCDR-glossy-final.pdf
         "OAE": (40, 260),
-        "OF": (7, 500),
+        "OF": (50, 500),
     }
 
     rng = np.random.default_rng(pseed)
