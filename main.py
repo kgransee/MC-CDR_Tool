@@ -54,8 +54,7 @@ def main():
     print("3. Generate Global Portfolio (based on survey results)")
     print("4. Generate Global Portfolio (based on Rueda et al. 2021)")
     print("5. Generate EU Portfolio (based literature, EU Policy, and survey)")
-    print("6. Generate EU Portfolio (based on Rueda et al. 2021 side impacts)")
-    print("7. Generate Global Portfolio (based on survey results, use of range of side impact esitmates)")
+    print("6. Generate Global Portfolio (based on survey results, use of range of side impact esitmates)")
     while True:
         choice = input("Select an option (2-6): ").strip()
         if choice in ("2", "3", "4", "5", "6"):
@@ -122,7 +121,7 @@ def main():
                 cdr_methods = generate_random_portfolioEU(pseed=seed)
                 print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
     elif choice == "6":
-            print("\nGenerating EU portfolio...")
+            print("\nGenerating Full Monte Carlo Global Simulation")
             print("a) Single run (one seed)")
             print("b) 10,000-run simulation (fixed seed order for replication)")
             dataUse = "SurveyRange"

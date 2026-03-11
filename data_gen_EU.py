@@ -20,6 +20,12 @@ def generate_random_portfolioEU(pseed):
         "DACCS": (0.288,0.288) #Lux et al 2023
     }
 
+    side_effect_max = {
+        "Biochar": (.001,2.5), #survey ranges
+        "BECCS": (.001,2.5), #survey ranges
+        "DACCS": (.001,4.0) #survey ranges
+    }
+
     storage_types = {
         "Biochar": "sediments",
         "BECCS": "geological formations",
@@ -40,10 +46,12 @@ def generate_random_portfolioEU(pseed):
 
         low, high = cost_ranges[main]
         lowr, highr = removal_max[main]
+        lowsm, highsm = side_effect_max[main]
         mac = float(rng.uniform(low, high))
         maxRemove=float(rng.uniform(lowr,highr))
         lows, highs = scaled_side_effects[main]
         scaledSideEffects=float(rng.uniform(lows,highs))
+        sideEffectMax=float(rng.uniform(lowsm,highsm))
 
         portfolio.append(
             CDRMethod(
@@ -54,7 +62,7 @@ def generate_random_portfolioEU(pseed):
                 initialCost=0.0,
                 storageType=storage_types[main],
                 sideEffect=scaledSideEffects,
-                sideEffectMax=maxRemove
+                sideEffectMax=sideEffectMax
             )
         )
 

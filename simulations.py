@@ -14,17 +14,7 @@ from output_portfolio_sim import (
     lexicographic_opt_iterative,
     pareto_portfolio_iterative_layers,
 )
-# -------------------------------------------------
-# General helpers
-# --------------------------------------------------
 def build_macc_steps(portfolio, storage_target):
-    """
-    Convert a portfolio into MACC step data without plotting.
-
-    Returns:
-        edges: cumulative capacity bin edges, starting with 0.0
-        heights: MAC values for each step
-    """
     if not portfolio:
         return [0.0], []
 
@@ -54,16 +44,6 @@ def build_macc_steps(portfolio, storage_target):
 
 
 def evaluate_step_curve(edges, heights, x_grid):
-    """
-    Evaluate a stepwise MACC on a common x-grid using carry-forward steps.
-
-    edges: [0, x1, x2, ...]
-    heights: [h1, h2, ...]
-    x_grid: numpy array of cumulative capacity points
-
-    Returns:
-        y values on x_grid, with NaN beyond the curve's final extent.
-    """
     y = np.full_like(x_grid, np.nan, dtype=float)
 
     if len(heights) == 0:
@@ -84,13 +64,9 @@ def evaluate_step_curve(edges, heights, x_grid):
             y[i] = heights[-1]
 
     return y
-def aggregate_macc_curves(results, portfolio_key, storage_target, n_grid=250):
-    """
-    Aggregate MACC curves across runs by evaluating each run on a common grid.
 
-    Returns:
-        x_grid, mean_curve, std_curve, mean_final_extent
-    """
+#usd in creating the standard MACC
+def aggregate_macc_curves(results, portfolio_key, storage_target, n_grid=250):
     x_grid = np.linspace(0, float(storage_target), n_grid)
     curves = []
     final_extents = []
@@ -125,17 +101,16 @@ def aggregate_macc_curves(results, portfolio_key, storage_target, n_grid=250):
 
     return x_grid, mean_curve, std_curve, mean_final_extent
 
+#as described
 def extract_method_name(method):
-    """Use mainType for aggregation across runs."""
     return method.mainType
 
-
+#used in some graphs to represent billions.
 def _format_billions(x, pos):
     return f"{x:,.0f}"
 
 
 def _step_fill_arrays(edges, mean_vals, std_vals):
-    """Build step-compatible arrays for mean ± std shading."""
     if not mean_vals:
         return np.array([]), np.array([]), np.array([])
 
@@ -334,7 +309,6 @@ def aggregate_lexicographic_scatter_data(results):
 
     n_runs = len(results)
 
-    # collect all methods that ever appear
     all_methods = set()
     for r in results:
         portfolio = r.get("lg_portfolio", []) or []
@@ -342,7 +316,6 @@ def aggregate_lexicographic_scatter_data(results):
             method = extract_method_name(e["method"])
             all_methods.add(method)
 
-    # process runs
     for r in results:
         portfolio = r.get("lg_portfolio", []) or []
         entries = [
@@ -628,7 +601,6 @@ def plot_aggregate_pareto_scatter(
         )
         ax.legend()
 
-    # ---------- automatic label placement ----------
     texts = []
     for i, method in enumerate(methods):
 
@@ -658,7 +630,6 @@ def plot_aggregate_pareto_scatter(
         ax=ax,
         arrowprops=dict(arrowstyle="-", color="gray", lw=0.8),
     )
-    # -----------------------------------------------
 
     ax.set_xlabel("Average MAC ($/tCO₂)")
     ax.set_ylabel("Average Side Effect")
@@ -672,16 +643,8 @@ def plot_aggregate_pareto_scatter(
     print(f"Saved aggregate Pareto scatter plot: {output_path}")
     return output_path
 
-# --------------------------------------------------
-# Aggregate MACC helpers
-# --------------------------------------------------
-
+#used for th structural graph, maintains the ordering. Due to the aggregation, this is not as representative. 
 def aggregate_lexicographic_macc(results):
-    """
-    Aggregate lexicographic MACC across runs and keep method labels so
-    segments can be annotated in the plot.
-    """
-
     all_positions = set()
 
     for r in results:
@@ -792,12 +755,6 @@ def extract_pareto_layers(portfolio):
 
 
 def aggregate_pareto_macc(results):
-    """
-    Aggregate Pareto MACC across runs.
-
-    Ensures that within each Pareto layer the aggregated entries
-    are sorted by increasing mean MAC.
-    """
 
     all_keys = set()
 
@@ -883,9 +840,7 @@ def aggregate_pareto_macc(results):
         layer_boundaries[layer] = installed
 
     return edges, heights_mean, heights_std, layer_boundaries, aggregated_by_layer
-# --------------------------------------------------
-# Plotting helpers
-# --------------------------------------------------
+
 def _step_xy(edges, heights):
     if not heights:
         return [], []
@@ -1041,7 +996,6 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
     print(f"Lexicographic aggregate total: {lg_edges[-1] if lg_heights_mean else 0:.2f} Gt")
     print(f"Pareto aggregate total: {p_edges[-1] if p_heights_mean else 0:.2f} Gt")
     return output_path
-
 
 def plot_bar_comparison(values, errors, labels, ylabel, title, output_path):
     values_b = np.array(values, dtype=float) / 1e9
@@ -1249,10 +1203,6 @@ def plot_adjusted_pv_six_bars(values, errors, output_path, title):
     plt.close(fig)
 
 def plot_standard_macc_curve(results, storage_target, output_path):
-    """
-    Plot aggregate Lexicographic and Pareto MACC curves with ±1 std bands.
-    Curves are clipped to mean achieved cumulative removal.
-    """
     x_lg, lg_mean, lg_std, lg_extent = aggregate_macc_curves(
         results,
         "lg_portfolio",
@@ -1388,11 +1338,10 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
 
     print(f"Saved aggregate removal plot: {output_path}")
     
-# --------------------------------------------------
-# Core simulation
-# --------------------------------------------------
-
-
+#########################################
+#########################################
+#########################################
+# Below is the core code for simulation, all above deals with plotting and helper functions. 
 def run_single_seed(
     viaCheck,
     dataUse,
@@ -1405,7 +1354,6 @@ def run_single_seed(
     EuropeanStoragePotential,
     NorthAmericanStoragePotential,
     GlobalStoragePotential,
-    debug=False,
 ):
     if dataUse == "Survey":
         cdr_methods = generate_random_portfolio(pseed=seed)
@@ -1463,7 +1411,6 @@ def run_single_seed(
         storage_target,
         duration_years,
         pass_storage_potential=sp,
-        plot=False,
     )
 
     (
@@ -1501,7 +1448,7 @@ def run_single_seed(
         "pareto_portfolio": pareto or [],
     }
 
-
+#function name is a legacy, code was imporoved upon and now runs with 10,000 simulations.
 def run_100_simulations(
     viaCheck,
     dataUse,
@@ -1554,6 +1501,10 @@ def run_100_simulations(
     p_adj_pos_mean, p_adj_pos_std = p_adj_pos_vals.mean(), p_adj_pos_vals.std(ddof=1)
     p_adj_neg_mean, p_adj_neg_std = p_adj_neg_vals.mean(), p_adj_neg_vals.std(ddof=1)
 
+    #custom output path per sesssion, so it can be seen what has been done
+    #the time element prevents over writing in the case that the same 
+    #simulation is ran again.
+    #NO VC output means no viability constraint
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     storage_target = removal_target["storage_target"]
     output_root = "with_VC_output" if viaCheck else "no_VC_output"

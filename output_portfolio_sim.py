@@ -1,5 +1,20 @@
+"""""
+This .py file is the powerhouse of the program. ALl logic and optimization is conducted in this 
+file. This is done per portfolio, and these are called in each simulation.
+The simulation stores the output, and there the aggreate information is calculated.
+
+viaCheck is used throughout to ensure that the side efffect is constrainted by its associated
+implementation.
+
+In the abscense of the viaCheck, the realized technological maximum
+is automatically the annual maximum
+
+"""""
+
+
 
 #helper function to be called by both pareto and lexio iterative functions
+#Here, the present value of benefits and externalties are calculated
 def _compute_pv_net(
     viaCheck,
     method,
@@ -10,6 +25,8 @@ def _compute_pv_net(
     current_year,
     duration_years,
 ):
+    #annua_gt is the annual removals for a method in gigatons, this applies the above 
+    #described logic
     if viaCheck:
         annual_gt = min(float(method.maxRemove), float(method.sideEffectMax))
     else:
@@ -17,14 +34,17 @@ def _compute_pv_net(
 
     if annual_gt <= 0 or actual_contribution <= 0:
         return 0.0, 0.0, 0.0, 0.0, 0.0
-
+    #for example, 2.4% is then 0.024
     r = float(SDR) / 100.0
     gt_to_t = 1e9
     net_per_ton = float(SCC) - float(method.mac)
     se = float(getattr(method, "sideEffect", 0.0))
 
+    #climate benefit is the SCC - MAC, variable net_per_ton
     pv_climate_benefit = 0.0
+    #this is the aggreate externality
     pv_externality = 0.0
+    #below decomposes the externality 
     pv_positive_externality = 0.0
     pv_negative_externality = 0.0
 
@@ -32,6 +52,8 @@ def _compute_pv_net(
     y = 0
 
     while remaining_gt > 0 and y < duration_years:
+        #these are the values specified at the beginning.
+        #In all simulations, start year was 2050, and current year was 2025
         year = start_year + y
         t = year - current_year
 
@@ -53,14 +75,16 @@ def _compute_pv_net(
 
         pv_climate_benefit += discounted_climate
         pv_externality += discounted_externality
-
+        #determination if positive or negative, for accounting purposes. 
+        #this breakdown presents a better visualization of the externalties involved in
+        #implementation.
         if discounted_externality >= 0:
             pv_positive_externality += discounted_externality
         else:
             pv_negative_externality += discounted_externality
 
         y += 1
-
+    
     pv_social_net_benefit = pv_climate_benefit + pv_externality
 
     return (
@@ -71,7 +95,7 @@ def _compute_pv_net(
         pv_negative_externality,
     )
 
-
+#this replicates equation 37 from the thesis. 
 def _pareto_front(methods):
     front = []
 
@@ -97,9 +121,6 @@ def _pareto_front(methods):
 
 #helper function, called here within to sort the Pareto layer by MAC from least to highest
 def _allocate_by_increasing_mac(viaCheck, front_methods, remaining_target, duration_years, sp, geo_used):
-    """
-    Sort current Pareto front by MAC and allocate capacity in that order.
-    """
     remaining_target = float(remaining_target)
     sorted_front = sorted(front_methods, key=lambda m: float(m.mac))
 
@@ -132,6 +153,9 @@ def _allocate_by_increasing_mac(viaCheck, front_methods, remaining_target, durat
 
     return sorted_front, allocations, geo_used
 
+
+#this function does the lexicographic optimization
+#done one method as a time and builds then the implemented portfolio.
 def lexicographic_opt_iterative(
     viaCheck,
     SDR,
@@ -145,6 +169,9 @@ def lexicographic_opt_iterative(
     max_iterations=1000,
     verbose=False,
 ):
+    #geological storage counter, makes sure the limit is not transgressed.
+    # in the data generation, the storage requirment is assigned based on method type
+
     sp = float(pass_storage_potential)
     geo_store_counter = 0.0
     partial = None
@@ -158,7 +185,8 @@ def lexicographic_opt_iterative(
     lg_methods = []
     installed_capacity = 0.0
     iterations = 0
-
+    #1e-9 is used for floating point error, done the same in Pareto Optimization
+    #the main loop, where methods are appendend 
     while remaining_methods and installed_capacity < float(storage_target) - 1e-9 and iterations < max_iterations:        
         iterations += 1
         lg_candidate = None
@@ -168,6 +196,7 @@ def lexicographic_opt_iterative(
             for other in remaining_methods:
                 if other is m:
                     continue
+                #core check. prioritizes that need for a lower MAC, and sideEffect is secondary
                 if other.mac < m.mac or (other.mac == m.mac and other.sideEffect > m.sideEffect):
                     dominated = True
                     break
@@ -179,7 +208,9 @@ def lexicographic_opt_iterative(
             if verbose:
                 print("No lexicographic-dominant method found. Stopping.")
             break
-
+         #same logic for setting of the annual_gt, this 
+         # would have been more effective as a helper function, but
+         # that will be reflected in a further update   
         if viaCheck:
             annual_gt = min(float(lg_candidate.maxRemove), float(lg_candidate.sideEffectMax))
         else:
@@ -191,7 +222,7 @@ def lexicographic_opt_iterative(
         contribution = annual_gt * float(duration_years)
         actual_contribution = contribution
         partial = False
-
+        #here is the storage constraint check.
         if lg_candidate.storageType == "geological formations":
             remaining_sp = float(sp) - float(geo_store_counter)
             if remaining_sp <= 0:
@@ -202,7 +233,7 @@ def lexicographic_opt_iterative(
         remaining_capacity = float(storage_target) - float(installed_capacity)
         if remaining_capacity <= 0:
             break
-
+        #makes sure that the removal target is not exceeded
         actual_contribution = min(actual_contribution, remaining_capacity)
 
         (
@@ -221,7 +252,7 @@ def lexicographic_opt_iterative(
         current_year=current_year,
         duration_years=duration_years,
     )
-
+        #allows for partial implementation and marks it as so. 
         if actual_contribution < contribution:
             partial = True
 
@@ -246,7 +277,8 @@ def lexicographic_opt_iterative(
 
     return lg_methods
 
-
+#similar to above, but with Pareto optimization 
+#comments provided in areas where the logic is different than above. 
 def pareto_portfolio_iterative_layers(
     viaCheck,
     SDR,
@@ -258,10 +290,9 @@ def pareto_portfolio_iterative_layers(
     duration_years,
     pass_storage_potential,
     max_rounds=10_000,
-    plot=False,   # kept only for compatibility with existing calls
-    plot_rounds_limit=8,  # kept only for compatibility
     verbose=False,
 ):
+    #also the storage constraint 
     sp = float(pass_storage_potential)
     geo_used = 0.0
 
@@ -275,11 +306,13 @@ def pareto_portfolio_iterative_layers(
     installed = 0.0
     round_idx = 0
 
+    #1e-9 is the flotating point check
     while remaining and installed < float(storage_target) - 1e-9 and round_idx < max_rounds:
         round_idx += 1
         front = _pareto_front(remaining)
         remaining_target = float(storage_target) - float(installed)
-
+        #this sorts the layer from least cost to high cost, relevant in the scenario when the entire layer
+        #cannot be implemented
         sorted_front, allocs, geo_used = _allocate_by_increasing_mac(
             viaCheck=viaCheck,
             front_methods=front,
