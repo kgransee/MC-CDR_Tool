@@ -1388,7 +1388,7 @@ def run_single_seed(
         sp = NorthAmericanStoragePotential
     elif region == "Global":
         sp = GlobalStoragePotential
-
+ 
     lg = lexicographic_opt_iterative(
         viaCheck,
         SDR,
