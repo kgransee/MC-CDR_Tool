@@ -22,14 +22,14 @@ def generate_random_portfolioSR(pseed):
           OF      CB05_10  CB05_10 -29.428571  -36.5  -83  93 14   176
     """
     raw_side_effects = {
-        "AR": (-13,99),
-        "SCS": (2,99),
-        "Biochar": (-61,99),
-        "BECCS": (-100,73),
-        "DACCS": (-89,77),
-        "ERW": (-17,84),
-        "OAE": (-58,97),
-        "OF": (-83,93)
+        "AR": (-13,100),
+        "SCS": (3,100),
+        "Biochar": (-61,100),
+        "BECCS": (-100,74),
+        "DACCS": (-89,78),
+        "ERW": (-17,85),
+        "OAE": (-58,98),
+        "OF": (-83,94)
     }
     scaled_side_effects = {k: (v[0] / 100.0, v[1] / 100.0) for k, v in raw_side_effects.items()}
     removal_max = {     #all numbers from Rueda et al. 2021 use peak potential, not 2050 potential. 

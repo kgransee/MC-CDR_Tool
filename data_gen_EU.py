@@ -8,9 +8,9 @@ def generate_random_portfolioEU(pseed):
 
     #using range from the survey
     raw_side_effects = {
-        "Biochar": (-61,99),
-        "BECCS": (-100,73),
-        "DACCS": (-89,77),
+        "Biochar": (-61,100),
+        "BECCS": (-100,74),
+        "DACCS": (-89,78),
     }
     scaled_side_effects = {k: (v[0] / 100.0, v[1] / 100.0) for k, v in raw_side_effects.items()}
 
