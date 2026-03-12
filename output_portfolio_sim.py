@@ -197,7 +197,7 @@ def lexicographic_opt_iterative(
                 if other is m:
                     continue
                 #core check. prioritizes that need for a lower MAC, and sideEffect is secondary
-                if other.mac < m.mac or (other.mac == m.mac and other.sideEffect > m.sideEffect):
+                if other.mac < m.mac:
                     dominated = True
                     break
             if not dominated:
