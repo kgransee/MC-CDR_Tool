@@ -997,66 +997,6 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
     print(f"Pareto aggregate total: {p_edges[-1] if p_heights_mean else 0:.2f} Gt")
     return output_path
 
-def plot_bar_comparison(values, errors, labels, ylabel, title, output_path):
-    values_b = np.array(values, dtype=float) / 1e9
-    errors_b = np.array(errors, dtype=float) / 1e9
-
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-
-    colors = ["black", "#d62728"] 
-
-    bars = ax.bar(
-        labels,
-        values_b,
-        width=0.65,
-        color=colors[:len(values_b)],
-        edgecolor="black",
-        linewidth=0.8,
-        yerr=errors_b,
-        capsize=5,
-        error_kw={
-            "elinewidth": 1.2,
-            "capthick": 1.2,
-            "ecolor": "black",
-        },
-        zorder=3,
-    )
-
-    ax.set_ylabel(ylabel)
-    ax.set_title(title, pad=10)
-
-    ax.yaxis.set_major_formatter(FuncFormatter(_format_billions))
-
-    ymax = max(values_b + errors_b) * 1.15 if len(values_b) else 1.0
-    ymin = min(0.0, np.min(values_b - errors_b) * 1.05)
-    ax.set_ylim(ymin, ymax)
-
-    # cleaner grid
-    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
-
-    # remove clutter
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    # value labels
-    for bar, v, e in zip(bars, values_b, errors_b):
-        y = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y + e,
-            f"{v:,.2f}B",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    print(f"Saved plot: {output_path}")
-    print(f"Y-axis range: {ymin:,.2f}B to {ymax:,.2f}B")
-
 
 def plot_aggregate_method_removal(results, output_path, title_prefix=""):
     lg_totals = aggregate_method_removal(results, "lg_portfolio")
@@ -1139,68 +1079,6 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
     print(f"Saved aggregate method removal plot: {output_path}")
     print("Methods plotted:", all_methods)
     return output_path
-
-def plot_adjusted_pv_six_bars(values, errors, output_path, title):
-    labels = [
-        "Lexicographic\nTotal Social Net PV",
-        "Lexicographic\nPositive Ext.",
-        "Lexicographic\nNegative Ext.",
-        "Pareto\nTotal Social Net PV",
-        "Pareto\nPositive Ext.",
-        "Pareto\nNegative Ext.",
-    ]
-
-    x = np.arange(len(labels))
-    values = np.array(values, dtype=float)
-    errors = np.array(errors, dtype=float)
-
-    fig, ax = plt.subplots(figsize=(12, 7))
-    colors = [
-        "black",      # Lexicographic total social PV
-        "dimgray",    # Lexicographic positive ext
-        "lightgray",  # Lexicographic negative ext
-        "#d62728",    # Pareto total social PV
-        "#ff6b6b",    # Pareto positive ext
-        "#f4a3a3",    # Pareto negative ext
-    ]
-    ax.bar(
-        x,
-        values,
-        yerr=errors,
-        capsize=5,
-        color=colors,
-        edgecolor="black",
-        linewidth=0.8,
-        error_kw={
-            "elinewidth": 1.2,
-            "capthick": 1.2,
-            "ecolor": "black",
-        },
-    )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=20, ha="right")
-    ax.set_ylabel("Mean PV ($)")
-    ax.set_title(title)
-
-    # zero reference line so negative bars are visually clear
-    ax.axhline(0, linewidth=1.0)
-
-    # allow room for negative and positive bars including error bars
-    lower = np.min(values - errors)
-    upper = np.max(values + errors)
-
-    if lower == upper:
-        pad = max(1.0, abs(lower) * 0.1)
-        ax.set_ylim(lower - pad, upper + pad)
-    else:
-        span = upper - lower
-        pad = span * 0.1
-        ax.set_ylim(lower - pad, upper + pad)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
 
 def plot_standard_macc_curve(results, storage_target, output_path):
     x_lg, lg_mean, lg_std, lg_extent = aggregate_macc_curves(
@@ -1511,43 +1389,6 @@ def run_100_simulations(
     output_dir = os.path.join(output_root, f"{dataUse}_Region{region}_SCC{SCC}_SDR{SDR}_target{storage_target}Gt_output")
     os.makedirs(output_dir, exist_ok=True)
 
-    out1 = os.path.join(
-        output_dir,
-        f"{dataUse}_composite_avg_climate_benefit_pv_{timestamp}.png"
-    )
-    plot_bar_comparison(
-        values=[lg_mean, p_mean],
-        errors=[lg_std, p_std],
-        labels=["Lexicographic", "Pareto"],
-        ylabel="Mean Net Climate Benefit PV ($)",
-        title="100-run Average climate-Benefit PV",
-        output_path=out1,
-        )
-
-    out2b = os.path.join(
-        output_dir,
-        f"{dataUse}_composite_avg_social_pv_externality_decomposition_{timestamp}.png"
-    )
-    plot_adjusted_pv_six_bars(
-        values=[
-            lg_adj_mean,
-            lg_adj_pos_mean,
-            lg_adj_neg_mean,
-            p_adj_mean,
-            p_adj_pos_mean,
-            p_adj_neg_mean,
-        ],
-        errors=[
-            lg_adj_std,
-            lg_adj_pos_std,
-            lg_adj_neg_std,
-            p_adj_std,
-            p_adj_pos_std,
-            p_adj_neg_std,
-        ],
-    output_path=out2b,
-    title="10,000-run Average Social Net Benefit PV and Externality Decomposition",
-    )
 
     out3_decomp = os.path.join(
         output_dir,
@@ -1603,8 +1444,6 @@ def run_100_simulations(
         "lg_adj_neg_mean": lg_adj_neg_mean,
         "pareto_adj_pos_mean": p_adj_pos_mean,
         "pareto_adj_neg_mean": p_adj_neg_mean,
-        "out_climate_benefit": out1,
-        "out_social_decomposition": out2b,
         "out_method_social_decomposition": out3_decomp,
         "out_structural_macc": out4_structural,
         "out_standard_macc": out4_standard,
