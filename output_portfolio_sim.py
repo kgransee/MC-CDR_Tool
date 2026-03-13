@@ -41,7 +41,7 @@ def _compute_pv_net(
     se = float(getattr(method, "sideEffect", 0.0))
 
     #climate benefit is the SCC - MAC, variable net_per_ton
-    pv_climate_benefit = 0.0
+    pv_net_climate_benefit = 0.0
     #this is the aggreate externality
     pv_externality = 0.0
     #below decomposes the externality 
@@ -73,7 +73,7 @@ def _compute_pv_net(
         discounted_climate = annual_climate_benefit / discount_factor
         discounted_externality = annual_externality / discount_factor
 
-        pv_climate_benefit += discounted_climate
+        pv_net_climate_benefit += discounted_climate
         pv_externality += discounted_externality
         #determination if positive or negative, for accounting purposes. 
         #this breakdown presents a better visualization of the externalties involved in
@@ -85,12 +85,12 @@ def _compute_pv_net(
 
         y += 1
     
-    pv_social_net_benefit = pv_climate_benefit + pv_externality
+    pv_total_social_benefit = pv_net_climate_benefit + pv_externality
 
     return (
-        pv_climate_benefit,
+        pv_net_climate_benefit,
         pv_externality,
-        pv_social_net_benefit,
+        pv_total_social_benefit,
         pv_positive_externality,
         pv_negative_externality,
     )
@@ -154,7 +154,7 @@ def _allocate_by_increasing_mac(viaCheck, front_methods, remaining_target, durat
     return sorted_front, allocations, geo_used
 
 
-#this function does the lexicographic optimization
+#this function does the cost minimization
 #done one method as a time and builds then the implemented portfolio.
 def lexicographic_opt_iterative(
     viaCheck,
@@ -206,7 +206,7 @@ def lexicographic_opt_iterative(
 
         if lg_candidate is None:
             if verbose:
-                print("No lexicographic-dominant method found. Stopping.")
+                print("No cost minimal method found. Stopping.")
             break
          #same logic for setting of the annual_gt, this 
          # would have been more effective as a helper function, but
@@ -237,9 +237,9 @@ def lexicographic_opt_iterative(
         actual_contribution = min(actual_contribution, remaining_capacity)
 
         (
-            pv_climate_benefit,
+            pv_net_climate_benefit,
             pv_externality,
-            pv_social_net_benefit,
+            pv_total_social_benefit,
             pv_positive_externality,
             pv_negative_externality,
         ) = _compute_pv_net(
@@ -266,9 +266,9 @@ def lexicographic_opt_iterative(
             "actual_contribution": actual_contribution,
             "mac": float(lg_candidate.mac),
             "partial": partial,
-            "pv_climate_benefit": pv_climate_benefit,
+            "pv_net_climate_benefit": pv_net_climate_benefit,
             "pv_externality": pv_externality,
-            "pv_social_net_benefit": pv_social_net_benefit,
+            "pv_total_social_benefit": pv_total_social_benefit,
             "pv_positive_externality": pv_positive_externality,
             "pv_negative_externality": pv_negative_externality,
         })
@@ -339,9 +339,9 @@ def pareto_portfolio_iterative_layers(
             partial = actual < contribution or installed >= storage_target
 
             (
-                pv_climate_benefit,
+                pv_net_climate_benefit,
                 pv_externality,
-                pv_social_net_benefit,
+                pv_total_social_benefit,
                 pv_positive_externality,
                 pv_negative_externality,
             ) = _compute_pv_net(
@@ -361,9 +361,9 @@ def pareto_portfolio_iterative_layers(
                 "mac": float(m.mac),
                 "partial": partial,
                 "round": round_idx,
-                "pv_climate_benefit": pv_climate_benefit,
+                "pv_net_climate_benefit": pv_net_climate_benefit,
                 "pv_externality": pv_externality,
-                "pv_social_net_benefit": pv_social_net_benefit,
+                "pv_total_social_benefit": pv_total_social_benefit,
                 "pv_positive_externality": pv_positive_externality,
                 "pv_negative_externality": pv_negative_externality,
             })

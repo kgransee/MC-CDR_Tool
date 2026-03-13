@@ -10,10 +10,25 @@ from cdr_viable import is_method_viable
 from data_gen import generate_random_portfolio
 from data_gen_Rueda import generate_random_portfolioR
 from adjustText import adjust_text
+from matplotlib.patches import Patch
 from output_portfolio_sim import (
     lexicographic_opt_iterative,
     pareto_portfolio_iterative_layers,
 )
+
+plt.rcParams.update({
+    "figure.titlesize": 22,
+    "axes.titlesize": 20,
+    "axes.labelsize": 16,
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14,
+    "legend.fontsize": 14
+})
+plt.rcParams["figure.figsize"] = (11, 7)
+
+def apply_default_axes_MACC(ax):
+    ax.set_ylim(0, 300)
+
 def build_macc_steps(portfolio, storage_target):
     if not portfolio:
         return [0.0], []
@@ -146,7 +161,7 @@ def _aggregate_metric_by_method(results, metric_key):
     return aggregates
 
 def plot_aggregate_method_social_decomposition(results, output_path):
-    climate_agg = _aggregate_metric_by_method(results, "pv_climate_benefit")
+    climate_agg = _aggregate_metric_by_method(results, "pv_net_climate_benefit")
     ext_agg = _aggregate_metric_by_method(results, "pv_externality")
 
     all_methods = sorted(
@@ -165,16 +180,18 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
         return
+    
+    scale = 1e15
 
-    lg_climate = np.array([climate_agg["Lexicographic"].get(m, 0.0) for m in all_methods], dtype=float)
-    p_climate = np.array([climate_agg["Pareto"].get(m, 0.0) for m in all_methods], dtype=float)
+    lg_climate = np.array([climate_agg["Lexicographic"].get(m, 0.0) for m in all_methods], dtype=float) / scale
+    p_climate = np.array([climate_agg["Pareto"].get(m, 0.0) for m in all_methods], dtype=float) / scale
 
-    lg_ext = np.array([ext_agg["Lexicographic"].get(m, 0.0) for m in all_methods], dtype=float)
-    p_ext = np.array([ext_agg["Pareto"].get(m, 0.0) for m in all_methods], dtype=float)
+    lg_ext = np.array([ext_agg["Lexicographic"].get(m, 0.0) for m in all_methods], dtype=float) / scale
+    p_ext = np.array([ext_agg["Pareto"].get(m, 0.0) for m in all_methods], dtype=float) / scale
 
     lg_ext_pos = np.maximum(lg_ext, 0.0)
-    lg_ext_neg = np.minimum(lg_ext, 0.0)
-    p_ext_pos = np.maximum(p_ext, 0.0)
+    lg_ext_neg = np.minimum(lg_ext, 0.0) 
+    p_ext_pos = np.maximum(p_ext, 0.0) 
     p_ext_neg = np.minimum(p_ext, 0.0)
 
     x = np.arange(len(all_methods))
@@ -186,7 +203,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         x - width / 2,
         lg_climate,
         width,
-        label="Lexicographic Net Climate Benefit",
+        label="Cost-Efficient Net Climate Benefit",
         color="black",
         edgecolor="black",
         linewidth=0.8,
@@ -196,7 +213,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         lg_ext_pos,
         width,
         bottom=lg_climate,
-        label="Lexicographic Positive Externality",
+        label="Cost-Efficient Positive Externality",
         color="dimgray",
         edgecolor="black",
         linewidth=0.8,
@@ -206,7 +223,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         lg_ext_neg,
         width,
         bottom=0,
-        label="Lexicographic Negative Externality",
+        label="Cost-Efficient Negative Externality",
         color="lightgray",
         edgecolor="black",
         linewidth=0.8,
@@ -243,8 +260,11 @@ def plot_aggregate_method_social_decomposition(results, output_path):
     )
     ax.set_xticks(x)
     ax.set_xticklabels(all_methods, rotation=45, ha="right")
-    ax.set_ylabel("Discounted PV ($)")
+
+    ax.set_ylabel("Present Value of Benefits (quadrillion $)")
     ax.set_title("Monte Carlo Aggregate Externality Decomposition by Method")
+    #for EU simulation, not done
+    # ax.set_ylim(-20, 180) 
     ax.axhline(0, linewidth=1.0)
     ax.legend(ncol=2)
 
@@ -260,9 +280,9 @@ def compute_adjusted_total_pv(portfolio):
     total_negative_externality = 0.0
 
     for entry in portfolio or []:
-        total_climate_benefit += float(entry.get("pv_climate_benefit", 0.0))
+        total_climate_benefit += float(entry.get("pv_net_climate_benefit", 0.0))
         total_externality += float(entry.get("pv_externality", 0.0))
-        total_social_benefit += float(entry.get("pv_social_net_benefit", 0.0))
+        total_social_benefit += float(entry.get("pv_total_social_benefit", 0.0))
         total_positive_externality += float(entry.get("pv_positive_externality", 0.0))
         total_negative_externality += float(entry.get("pv_negative_externality", 0.0))
 
@@ -363,11 +383,11 @@ def aggregate_lexicographic_scatter_data(results):
 def plot_aggregate_lexicographic_scatter(
     results,
     output_path,
-    title="Monte Carlo Aggregate Lexicographic Scatter by Average Selection Position",
+    title="Monte Carlo  Scatter of Cost-Efficient Methods by Average Position",
 ):
     rows = aggregate_lexicographic_scatter_data(results)
     if not rows:
-        print("No aggregate lexicographic scatter data available.")
+        print("No aggregate cost-efficient scatter data available.")
         return None
 
     methods = np.array([r["method"] for r in rows], dtype=object)
@@ -379,7 +399,7 @@ def plot_aggregate_lexicographic_scatter(
 
     valid_xy = np.isfinite(x) & np.isfinite(y)
     if not np.any(valid_xy):
-        print("No valid aggregate lexicographic scatter data to plot.")
+        print("No valid aggregate cost-efficient scatter data to plot.")
         return None
 
     methods = methods[valid_xy]
@@ -414,7 +434,8 @@ def plot_aggregate_lexicographic_scatter(
         )
 
         cbar = plt.colorbar(sc, ax=ax)
-        cbar.set_label("Average Implemented Lexicographic Selection Position")
+        cbar.set_label("Average Implemented Position", fontsize=14)
+        cbar.ax.tick_params(labelsize=12)
 
         tick_max = int(np.ceil(vmax))
         if tick_max >= 1:
@@ -440,14 +461,12 @@ def plot_aggregate_lexicographic_scatter(
                 x[i],
                 y[i],
                 label,
-                fontsize=9,
-                ha="center",
-                va="center",
+                fontsize=10,
                 bbox=dict(
-                    boxstyle="round,pad=0.2",
+                    boxstyle="round,pad=0.25",
                     fc="white",
-                    ec="none",
-                    alpha=0.85,
+                    ec="lightgray",
+                    alpha=0.9,
                 ),
             )
         )
@@ -466,7 +485,7 @@ def plot_aggregate_lexicographic_scatter(
     plt.tight_layout()
     plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()
-    print(f"Saved aggregate lexicographic scatter plot: {output_path}")
+    print(f"Saved aggregate cost-efficient scatter plot: {output_path}")
     return output_path
 
 def aggregate_pareto_scatter_data(results):
@@ -531,7 +550,7 @@ def aggregate_pareto_scatter_data(results):
 def plot_aggregate_pareto_scatter(
     results,
     output_path,
-    title="Monte Carlo Aggregate Pareto Scatter by Average Implemented Layer",
+    title="Monte Carlo Scatter of Non-Dominated (Pareto) Methods by Average Implemented Layer",
 ):
     rows = aggregate_pareto_scatter_data(results)
     if not rows:
@@ -581,9 +600,9 @@ def plot_aggregate_pareto_scatter(
             vmax=vmax,
             alpha=0.85,
         )
-
         cbar = plt.colorbar(sc, ax=ax)
-        cbar.set_label("Average Implemented Pareto Layer")
+        cbar.set_label("Average Implemented Pareto Layer", fontsize=14)
+        cbar.ax.tick_params(labelsize=12)
 
         tick_max = int(np.ceil(vmax))
         if tick_max >= 1:
@@ -613,14 +632,12 @@ def plot_aggregate_pareto_scatter(
                 x[i],
                 y[i],
                 label,
-                fontsize=9,
-                ha="center",
-                va="center",
+                fontsize=10,
                 bbox=dict(
-                    boxstyle="round,pad=0.2",
+                    boxstyle="round,pad=0.25",
                     fc="white",
-                    ec="none",
-                    alpha=0.85,
+                    ec="lightgray",
+                    alpha=0.9,
                 ),
             )
         )
@@ -870,7 +887,7 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
             where="post",
             linewidth=2.4,
             color="black",
-            label="Lexicographic",
+            label="Cost-efficient",
         )
         x, lower, upper = _step_fill_arrays(lg_edges, lg_heights_mean, lg_heights_std)
         ax.fill_between(x, lower, upper, step="post", color="black",alpha=0.20)
@@ -985,6 +1002,7 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
     ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
     ax.set_ylabel("Marginal Abatement Cost ($/tCO₂)")
     ax.set_title(f"{title_prefix}Average MACC Across Monte Carlo Runs".strip())
+    apply_default_axes_MACC(ax)
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -993,91 +1011,8 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
     plt.close()
 
     print(f"Saved aggregate MACC plot: {output_path}")
-    print(f"Lexicographic aggregate total: {lg_edges[-1] if lg_heights_mean else 0:.2f} Gt")
+    print(f"Cost-efficient aggregate total: {lg_edges[-1] if lg_heights_mean else 0:.2f} Gt")
     print(f"Pareto aggregate total: {p_edges[-1] if p_heights_mean else 0:.2f} Gt")
-    return output_path
-
-
-def plot_aggregate_method_removal(results, output_path, title_prefix=""):
-    lg_totals = aggregate_method_removal(results, "lg_portfolio")
-    pareto_totals = aggregate_method_removal(results, "pareto_portfolio")
-
-    all_methods = sorted(set(lg_totals.keys()) | set(pareto_totals.keys()))
-    lg_means, lg_stds, pareto_means, pareto_stds = [], [], [], []
-
-    for method in all_methods:
-        lg_vals = np.array(lg_totals.get(method, []), dtype=float)
-        p_vals = np.array(pareto_totals.get(method, []), dtype=float)
-
-        lg_means.append(lg_vals.mean() if lg_vals.size else 0.0)
-        pareto_means.append(p_vals.mean() if p_vals.size else 0.0)
-        lg_stds.append(lg_vals.std(ddof=1) if lg_vals.size > 1 else 0.0)
-        pareto_stds.append(p_vals.std(ddof=1) if p_vals.size > 1 else 0.0)
-
-    x = np.arange(len(all_methods))
-    width = 0.38
-
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-
-    ax.bar(
-        x - width / 2,
-        lg_means,
-        width,
-        yerr=lg_stds,
-        capsize=5,
-        color="black",
-        edgecolor="black",
-        linewidth=0.8,
-        error_kw={
-            "elinewidth": 1.2,
-            "capthick": 1.2,
-            "ecolor": "black",
-        },
-        label="Lexicographic",
-        zorder=3,
-    )
-
-    ax.bar(
-        x + width / 2,
-        pareto_means,
-        width,
-        yerr=pareto_stds,
-        capsize=5,
-        color="#d62728",
-        edgecolor="black",
-        linewidth=0.8,
-        error_kw={
-            "elinewidth": 1.2,
-            "capthick": 1.2,
-            "ecolor": "black",
-        },
-        label="Pareto",
-        zorder=3,
-    )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(all_methods, rotation=45, ha="right")
-    ax.set_ylabel("Average Removal (Gt CO₂ per simulation)")
-    ax.set_title(f"{title_prefix}Average Removal by Method Across Runs".strip(), pad=10)
-    ax.legend()
-
-    ymax = max(
-        [0.0]
-        + [m + s for m, s in zip(lg_means, lg_stds)]
-        + [m + s for m, s in zip(pareto_means, pareto_stds)]
-    ) * 1.15
-    ax.set_ylim(0, ymax if ymax > 0 else 1)
-
-    ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    print(f"Saved aggregate method removal plot: {output_path}")
-    print("Methods plotted:", all_methods)
     return output_path
 
 def plot_standard_macc_curve(results, storage_target, output_path):
@@ -1094,14 +1029,14 @@ def plot_standard_macc_curve(results, storage_target, output_path):
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Lexicographic
+    # Cost-efficient
     ax.step(
         x_lg,
         lg_mean,
         where="post",
         linewidth=2.2,
         color="black",
-        label="Lexicographic",
+        label="Cost-efficient",
     )
     ax.fill_between(
         x_lg,
@@ -1137,6 +1072,7 @@ def plot_standard_macc_curve(results, storage_target, output_path):
     ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
     ax.set_ylabel("Marginal Abatement Cost ($/tCO₂)")
     ax.set_title("Mean MACC Across Monte Carlo Runs")
+    apply_default_axes_MACC(ax)
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -1145,7 +1081,7 @@ def plot_standard_macc_curve(results, storage_target, output_path):
     plt.close()
 
     print(f"Saved Mean MACC Across Monte Carlo Runs: {output_path}")
-    print(f"Lexicographic mean extent: {lg_extent:.2f} Gt")
+    print(f"Cost-efficient mean extent: {lg_extent:.2f} Gt")
     print(f"Pareto mean extent: {p_extent:.2f} Gt")
     return output_path
 
@@ -1154,7 +1090,7 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
     pareto_totals = aggregate_method_removal(results, "pareto_portfolio")
 
     all_methods = sorted(set(lg_totals.keys()) | set(pareto_totals.keys()))
-    lg_means, lg_stds, pareto_means, pareto_stds = [], [], [], []
+    lg_means, pareto_means = [], []
 
     for method in all_methods:
         lg_vals = np.array(lg_totals.get(method, []), dtype=float)
@@ -1162,9 +1098,6 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
 
         lg_means.append(lg_vals.mean() if lg_vals.size else 0.0)
         pareto_means.append(p_vals.mean() if p_vals.size else 0.0)
-
-        lg_stds.append(lg_vals.std(ddof=1) if lg_vals.size > 1 else 0.0)
-        pareto_stds.append(p_vals.std(ddof=1) if p_vals.size > 1 else 0.0)
 
     x = np.arange(len(all_methods))
     width = 0.38
@@ -1175,20 +1108,16 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
         x - width / 2,
         lg_means,
         width,
-        yerr=lg_stds,
-        capsize=5,
         color="black",
         edgecolor="black",
         linewidth=0.8,
-        label="Lexicographic",
+        label="Cost-efficient",
     )
 
     ax.bar(
         x + width / 2,
         pareto_means,
         width,
-        yerr=pareto_stds,
-        capsize=5,
         color="#d62728",
         edgecolor="black",
         linewidth=0.8,
@@ -1201,13 +1130,10 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
     ax.set_title(f"{title_prefix}Average Removal by Method Across Runs".strip())
     ax.legend()
 
-    ymax = max(
-        [0.0]
-        + [m + s for m, s in zip(lg_means, lg_stds)]
-        + [m + s for m, s in zip(pareto_means, pareto_stds)]
-    ) * 1.15
+    # fixed y-axis, change for EU setting
+    #ax.set_ylim(0, 80)
+    ax.set_ylim(0, 15)
 
-    ax.set_ylim(0, ymax if ymax > 0 else 1)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     plt.tight_layout()
