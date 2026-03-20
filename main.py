@@ -3,8 +3,10 @@ from cdr_viable import check_storage_feasibility, read_storage_potential
 from define_removal_target import define_removal_target
 from data_gen import *
 from data_gen_Rueda import *
+from data_gen_rnorm import *
 from data_gen_EU import *
 from simulations import *
+from data_gen_rnormLB import *
 from data_gen_Rueda import *
 from data_gen_SurveyRange import *
 
@@ -50,16 +52,19 @@ def main():
     dataUse = None
     sim_choice = None
     print("\nHow would you like to provide CDR methods?")
+    print("1. Generate Global Portfolio (restricted normal distribution for side impact evaluations)")
     print("2. Import methods from an Excel file")
     print("3. Generate Global Portfolio (based on survey results)")
     print("4. Generate Global Portfolio (based on Rueda et al. 2021)")
     print("5. Generate EU Portfolio (based literature, EU Policy, and survey)")
     print("6. Generate Global Portfolio (based on survey results, use of range of side impact esitmates)")
+    print("7. Generate Global land-based Portfolio (restricted normal distribution for side impact evaluations)")
+
     while True:
-        choice = input("Select an option (2-6): ").strip()
-        if choice in ("2", "3", "4", "5", "6"):
+        choice = input("Select an option (1-6): ").strip()
+        if choice in ("1", "2", "3", "4", "5", "6", "7"):
             break
-        print("Invalid selection. Please enter 2, 3, 4, 5, or 6.")
+        print("Invalid selection. Please enter 1, 2, 3, 4, 5, 6, or 7.")
     #manual Entry
 
     #Excel Import, file CDRInputs.xlsx is a template file with example CDR methods, users can modify this file and input their own methods, but they need to keep the same format for the code to work. The code will read the file and create CDR method objects based on the data in the file.
@@ -135,6 +140,36 @@ def main():
                 seed = 13
                 cdr_methods = generate_random_portfolioSR(pseed=seed)
                 print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
+    elif choice == "1":
+            print("\nGenerating Full Monte Carlo Global Simulation, with triangle distribution")
+            print("a) Single run (one seed)")
+            print("b) 10,000-run simulation (fixed seed order for replication)")
+            dataUse = "rnorm"
+            while True:
+                sim_choice = input("Select (a/b): ").strip().lower()
+                if sim_choice in ("a", "b"):
+                    break
+                print("Invalid selection. Enter a or b.")
+
+            if sim_choice == "a":
+                seed = 13
+                cdr_methods = generate_random_portfoliornorm(pseed=seed)
+                print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
+    elif choice == "7":
+            print("\nGenerating Global, land based Monte Carlo Simulation, restricted normal distribution")
+            print("a) Single run (one seed)")
+            print("b) 10,000-run simulation (fixed seed order for replication)")
+            dataUse = "rnormLB"
+            while True:
+                sim_choice = input("Select (a/b): ").strip().lower()
+                if sim_choice in ("a", "b"):
+                    break
+                print("Invalid selection. Enter a or b.")
+
+            if sim_choice == "a":
+                seed = 13
+                cdr_methods = generate_random_portfoliornormLB(pseed=seed)
+                print(f"Generated {len(cdr_methods)} CDR methods using seed={seed}.")
     #confirmation of the imported methods or entered methods
     print("\nCollected CDR methods:")
     for m in cdr_methods:
@@ -167,7 +202,7 @@ def main():
 
         print("SDR =", SDR)
 
-    if choice in ("3", "4", "5", "5", "6") and sim_choice == "b":
+    if choice in ("3", "4", "5", "5", "6", "1", "7") and sim_choice == "b":
         seeds = list(range(1, 10001))
         seeds2 = list(range(1, 10001))
         #first simulations with viability check

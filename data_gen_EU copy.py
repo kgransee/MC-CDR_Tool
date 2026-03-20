@@ -1,20 +1,19 @@
 import numpy as np
 
 from cdr_method import CDRMethod
-def restricted_normal(mean, sd, rng, size=1,):
-    x = rng.normal(loc=mean, scale=sd, size=size)
-    x[x > 100] = 100
-    x[x < -100] = -100
-    return x
+
 def generate_random_portfolioEU(pseed):
     #In line with CRCF EU 2026, only three possible methods
     main_types = ["Biochar", "BECCS", "DACCS"]
-    side_impact_params = {
-        "Biochar": (-100.0, 100.0,  39.7, 38.8),
-        "BECCS":   (-100.0, 100.0,   9.87,43.3),
-        "DACCS":   (-100.0, 100.0,  -4.38,47.2),
-    }
+
     #using range from the survey
+    raw_side_effects = {
+        "Biochar": (-61,100),
+        "BECCS": (-100,74),
+        "DACCS": (-89,78),
+    }
+    scaled_side_effects = {k: (v[0] / 100.0, v[1] / 100.0) for k, v in raw_side_effects.items()}
+
     removal_max = {
         "Biochar": (0.07,0.290), #Tisserant et al. 2023
         "BECCS": (0.2,0.2), #Rosa et al 2021, also provide estimate of needing to removal total emissions of 200 to 1200 MT CO2 per year
@@ -50,9 +49,8 @@ def generate_random_portfolioEU(pseed):
         lowsm, highsm = side_effect_max[main]
         mac = float(rng.uniform(low, high))
         maxRemove=float(rng.uniform(lowr,highr))
-        lowsi, highsi, meansi, sdsi = side_impact_params[main]
-        raw_side_effect = restricted_normal(meansi, sdsi, rng, size=1)[0]
-        scaledSideEffects = raw_side_effect / 100.0
+        lows, highs = scaled_side_effects[main]
+        scaledSideEffects=float(rng.uniform(lows,highs))
         sideEffectMax=float(rng.uniform(lowsm,highsm))
 
         portfolio.append(

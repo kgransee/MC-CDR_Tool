@@ -4,6 +4,9 @@ from collections import defaultdict
 from data_gen_SurveyRange import *
 import matplotlib.pyplot as plt
 import numpy as np
+from data_gen_rnormLB import *
+
+from data_gen_rnorm import *
 from matplotlib.ticker import FuncFormatter
 from data_gen_EU import *
 from cdr_viable import is_method_viable
@@ -146,7 +149,7 @@ def _aggregate_metric_by_method(results, metric_key):
         "Lexicographic": defaultdict(float),
         "Pareto": defaultdict(float),
     }
-
+    n_runs = len(results)
     for result in results or []:
         for entry in result.get("lg_portfolio", []):
             method = entry["method"]
@@ -157,7 +160,10 @@ def _aggregate_metric_by_method(results, metric_key):
             method = entry["method"]
             label = _method_label(method)
             aggregates["Pareto"][label] += float(entry.get(metric_key, 0.0))
-
+    for k in aggregates:
+        for m in aggregates[k]:
+            aggregates[k][m] /= n_runs
+    
     return aggregates
 
 def plot_aggregate_method_social_decomposition(results, output_path):
@@ -173,15 +179,16 @@ def plot_aggregate_method_social_decomposition(results, output_path):
 
     if not all_methods:
         fig, ax = plt.subplots(figsize=(10, 6))
-        ax.set_title("Monte Carlo Aggregate Externality Decomposition by Method")
+        ax.set_title("Monte Carlo Simulation: Expected Benefit Decomposition by Method")
         ax.set_ylabel("PV ($)")
         ax.text(0.5, 0.5, "No data available", ha="center", va="center")
         plt.tight_layout()
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
         return
-    
-    scale = 1e15
+   
+    #scale = 1
+    scale = 1e13
 
     lg_climate = np.array([climate_agg["Lexicographic"].get(m, 0.0) for m in all_methods], dtype=float) / scale
     p_climate = np.array([climate_agg["Pareto"].get(m, 0.0) for m in all_methods], dtype=float) / scale
@@ -203,7 +210,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         x - width / 2,
         lg_climate,
         width,
-        label="Cost-Efficient Net Climate Benefit",
+        label="Cost Opt.: Net Climate Benefit",
         color="black",
         edgecolor="black",
         linewidth=0.8,
@@ -213,7 +220,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         lg_ext_pos,
         width,
         bottom=lg_climate,
-        label="Cost-Efficient Positive Externality",
+        label="Cost Opt.: Positive Externality",
         color="dimgray",
         edgecolor="black",
         linewidth=0.8,
@@ -223,7 +230,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         lg_ext_neg,
         width,
         bottom=0,
-        label="Cost-Efficient Negative Externality",
+        label="Cost Opt.: Negative Externality",
         color="lightgray",
         edgecolor="black",
         linewidth=0.8,
@@ -233,7 +240,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         x + width / 2,
         p_climate,
         width,
-        label="Pareto Net Climate Benefit",
+        label="Pareto Opt.: Net Climate Benefit",
         color="#d62728",
         edgecolor="black",
         linewidth=0.8,
@@ -243,7 +250,7 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         p_ext_pos,
         width,
         bottom=p_climate,
-        label="Pareto Positive Externality",
+        label="Pareto Opt.: Positive Externality",
         color="#ff6b6b",
         edgecolor="black",
         linewidth=0.8,
@@ -253,20 +260,25 @@ def plot_aggregate_method_social_decomposition(results, output_path):
         p_ext_neg,
         width,
         bottom=0,
-        label="Pareto Negative Externality",
+        label="Pareto Opt.: Negative Externality",
         color="#f4a3a3",
         edgecolor="black",
         linewidth=0.8,
     )
     ax.set_xticks(x)
-    ax.set_xticklabels(all_methods, rotation=45, ha="right")
+    main_types = [m.split(" | ")[0] for m in all_methods]
+    ax.set_xticklabels(main_types, rotation=45, ha="right")
 
-    ax.set_ylabel("Present Value of Benefits (quadrillion $)")
-    ax.set_title("Monte Carlo Aggregate Externality Decomposition by Method")
-    #for EU simulation, not done
-    # ax.set_ylim(-20, 180) 
+    ax.set_ylabel("Present Value (trillion $)")
+    ax.set_title("Monte Carlo Simulation: Expected Externality Decomposition by Method")
+    #for EU simulation, use 10not done
+    #ax.set_ylim(-1, 3) 
+    ax.set_ylim(-0.01, 0.1)
     ax.axhline(0, linewidth=1.0)
-    ax.legend(ncol=2)
+    ax.legend(
+        ncol=2,
+        loc="upper right"
+    )
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
@@ -383,7 +395,7 @@ def aggregate_lexicographic_scatter_data(results):
 def plot_aggregate_lexicographic_scatter(
     results,
     output_path,
-    title="Monte Carlo  Scatter of Cost-Efficient Methods by Average Position",
+    title="Monte Carlo Simulation: Cost Optimization Results",
 ):
     rows = aggregate_lexicographic_scatter_data(results)
     if not rows:
@@ -434,7 +446,7 @@ def plot_aggregate_lexicographic_scatter(
         )
 
         cbar = plt.colorbar(sc, ax=ax)
-        cbar.set_label("Average Implemented Position", fontsize=14)
+        cbar.set_label("Expected Implemented Position", fontsize=14,fontweight="bold",)
         cbar.ax.tick_params(labelsize=12)
 
         tick_max = int(np.ceil(vmax))
@@ -458,15 +470,18 @@ def plot_aggregate_lexicographic_scatter(
         label = f"{method} ({freq[i]:.0%})"
         texts.append(
             ax.text(
-                x[i],
+                x[i] + 3,
                 y[i],
                 label,
-                fontsize=10,
+                fontsize=12,
+                fontweight="bold",
+                ha="left",
+                va="center",
                 bbox=dict(
                     boxstyle="round,pad=0.25",
                     fc="white",
-                    ec="lightgray",
-                    alpha=0.9,
+                    ec="none",
+                    alpha=0.5,
                 ),
             )
         )
@@ -474,11 +489,15 @@ def plot_aggregate_lexicographic_scatter(
     adjust_text(
         texts,
         ax=ax,
+        expand_points=(1.2, 1.4),
+        expand_text=(1.2, 1.4),
+        force_points=0.3,
+        force_text=0.5,
         arrowprops=dict(arrowstyle="-", color="gray", lw=0.8),
     )
 
-    ax.set_xlabel("Average MAC ($/tCO₂)")
-    ax.set_ylabel("Average Side Effect")
+    ax.set_xlabel("Expected MAC ($/tCO₂)")
+    ax.set_ylabel("Expected Side Impact")
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
 
@@ -550,7 +569,7 @@ def aggregate_pareto_scatter_data(results):
 def plot_aggregate_pareto_scatter(
     results,
     output_path,
-    title="Monte Carlo Scatter of Non-Dominated (Pareto) Methods by Average Implemented Layer",
+    title="Monte Carlo Simulation: Pareto Optimization Results",
 ):
     rows = aggregate_pareto_scatter_data(results)
     if not rows:
@@ -601,7 +620,7 @@ def plot_aggregate_pareto_scatter(
             alpha=0.85,
         )
         cbar = plt.colorbar(sc, ax=ax)
-        cbar.set_label("Average Implemented Pareto Layer", fontsize=14)
+        cbar.set_label("Expected Implemented Pareto Layer", fontsize=14, fontweight="bold",)
         cbar.ax.tick_params(labelsize=12)
 
         tick_max = int(np.ceil(vmax))
@@ -629,15 +648,19 @@ def plot_aggregate_pareto_scatter(
 
         texts.append(
             ax.text(
-                x[i],
+                x[i] + 3,
                 y[i],
                 label,
-                fontsize=10,
+                fontsize=12,
+                color="black",
+                fontweight="bold",
+                ha="left",
+                va="center",
                 bbox=dict(
                     boxstyle="round,pad=0.25",
                     fc="white",
-                    ec="lightgray",
-                    alpha=0.9,
+                    ec="none",
+                    alpha=0.5,
                 ),
             )
         )
@@ -645,11 +668,15 @@ def plot_aggregate_pareto_scatter(
     adjust_text(
         texts,
         ax=ax,
+        expand_points=(1.2, 1.4),
+        expand_text=(1.2, 1.4),
+        force_points=0.3,
+        force_text=0.5,
         arrowprops=dict(arrowstyle="-", color="gray", lw=0.8),
     )
 
-    ax.set_xlabel("Average MAC ($/tCO₂)")
-    ax.set_ylabel("Average Side Effect")
+    ax.set_xlabel("Expected MAC ($/tCO₂)")
+    ax.set_ylabel("Expected Side Impact")
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
 
@@ -887,7 +914,7 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
             where="post",
             linewidth=2.4,
             color="black",
-            label="Cost-efficient",
+            label="Cost Optimization",
         )
         x, lower, upper = _step_fill_arrays(lg_edges, lg_heights_mean, lg_heights_std)
         ax.fill_between(x, lower, upper, step="post", color="black",alpha=0.20)
@@ -935,7 +962,7 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
                     layer_ys,
                     color=pareto_color,
                     linewidth=2.4,
-                    label="Pareto" if li == 0 else None
+                    label="Pareto Optimization" if li == 0 else None
                 )
 
                 # std band for this layer only
@@ -1001,9 +1028,10 @@ def plot_structural_macc_curve(results, output_path, title_prefix=""):
     ax.margins(x=0)
     ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
     ax.set_ylabel("Marginal Abatement Cost ($/tCO₂)")
-    ax.set_title(f"{title_prefix}Average MACC Across Monte Carlo Runs".strip())
+    ax.set_title(f"{title_prefix}Monte Carlo Simulation: Expected Marginal Abatement Cost Curves".strip())
     apply_default_axes_MACC(ax)
     ax.grid(True, alpha=0.25)
+
     ax.legend()
 
     plt.tight_layout()
@@ -1036,7 +1064,7 @@ def plot_standard_macc_curve(results, storage_target, output_path):
         where="post",
         linewidth=2.2,
         color="black",
-        label="Cost-efficient",
+        label="Cost Optimization(CO)",
     )
     ax.fill_between(
         x_lg,
@@ -1054,7 +1082,7 @@ def plot_standard_macc_curve(results, storage_target, output_path):
         where="post",
         linewidth=2.2,
         color="#d62728",
-        label="Pareto",
+        label="Pareto Optimization(PO)",
     )
     ax.fill_between(
         x_p,
@@ -1065,23 +1093,48 @@ def plot_standard_macc_curve(results, storage_target, output_path):
         alpha=0.2,
     )
 
-    xmax = max(lg_extent, p_extent)
-
-    ax.set_xlim(left=0, right=xmax if xmax > 0 else 1.0)
-    ax.set_ylim(bottom=0)
+    xmax = max(lg_extent, p_extent, storage_target)
+    xpad = 0.05 * xmax if xmax > 0 else 1.0
+    ax.set_xlim(left=0, right=xmax + xpad)
     ax.set_xlabel("Cumulative Storage Capacity (Gt CO₂)")
     ax.set_ylabel("Marginal Abatement Cost ($/tCO₂)")
-    ax.set_title("Mean MACC Across Monte Carlo Runs")
+    ax.set_title("Monte Carlo Simulation: Expected Marginal Abatement Cost Curves")
     apply_default_axes_MACC(ax)
     ax.grid(True, alpha=0.25)
-    ax.legend()
+    ax.axvline(
+        x=storage_target,
+        linestyle=":",
+        linewidth=2,
+        color="blue",
+        alpha=0.8,
+        label=f"Removal target ({storage_target:.0f} Gt CO₂)",
+    )
+    ax.axvline(
+        x=lg_extent,
+        linestyle=":",
+        linewidth=2,
+        color="black",
+        alpha=0.9,
+        label=f"Expected removal (CO): {lg_extent:.0f} Gt)",
+    )
+
+    # Pareto expected extent
+    ax.axvline(
+        x=p_extent,
+        linestyle=":",
+        linewidth=2,
+        color="#d62728",
+        alpha=0.9,
+        label=f"Expected removal (PO): {p_extent:.0f} Gt)",
+    )
+    ax.legend(loc="upper left")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()
 
     print(f"Saved Mean MACC Across Monte Carlo Runs: {output_path}")
-    print(f"Cost-efficient mean extent: {lg_extent:.2f} Gt")
+    print(f"Cost optimization mean extent: {lg_extent:.2f} Gt")
     print(f"Pareto mean extent: {p_extent:.2f} Gt")
     return output_path
 
@@ -1111,7 +1164,7 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
         color="black",
         edgecolor="black",
         linewidth=0.8,
-        label="Cost-efficient",
+        label="Cost optimization",
     )
 
     ax.bar(
@@ -1121,18 +1174,18 @@ def plot_aggregate_method_removal(results, output_path, title_prefix=""):
         color="#d62728",
         edgecolor="black",
         linewidth=0.8,
-        label="Pareto",
+        label="Pareto Optimization",
     )
 
     ax.set_xticks(x)
     ax.set_xticklabels(all_methods, rotation=45, ha="right")
-    ax.set_ylabel("Average Removal (Gt CO₂ per simulation)")
-    ax.set_title(f"{title_prefix}Average Removal by Method Across Runs".strip())
+    ax.set_ylabel("Expected Removals (Gt CO₂)")
+    ax.set_title(f"{title_prefix}Monte Carlo Simulation: Expected Removals by Method".strip())
     ax.legend()
 
-    # fixed y-axis, change for EU setting
+    # fixed y-axis, change for EU sim setting
     #ax.set_ylim(0, 80)
-    ax.set_ylim(0, 15)
+    ax.set_ylim(0, 10)
 
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
@@ -1167,6 +1220,10 @@ def run_single_seed(
         cdr_methods = generate_random_portfolioEU(pseed=seed)
     elif dataUse == "SurveyRange":
         cdr_methods = generate_random_portfolioSR(pseed=seed)
+    elif dataUse == "rnorm":
+        cdr_methods = generate_random_portfoliornorm(pseed=seed)
+    elif dataUse == "rnormLB":
+        cdr_methods = generate_random_portfoliornormLB(pseed=seed)
     else:
         raise ValueError(f"Unknown dataUse: {dataUse}")
 
@@ -1312,25 +1369,28 @@ def run_100_simulations(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     storage_target = removal_target["storage_target"]
     output_root = "with_VC_output" if viaCheck else "no_VC_output"
+    file_VC = "VC"
+    if (viaCheck == False):
+        file_VC = "NOVC"
     output_dir = os.path.join(output_root, f"{dataUse}_Region{region}_SCC{SCC}_SDR{SDR}_target{storage_target}Gt_output")
     os.makedirs(output_dir, exist_ok=True)
 
 
     out3_decomp = os.path.join(
         output_dir,
-        f"{dataUse}_aggregate_social_decomposition_by_method_{timestamp}.png"
+        f"{dataUse}_{file_VC}_{region}_{storage_target}_{SCC}_ext_decomp_by_method_{timestamp}.png"
     )
     plot_aggregate_method_social_decomposition(results, out3_decomp)
 
     out4_structural = os.path.join(
         output_dir,
-        f"{dataUse}_aggregate_structural_macc_{timestamp}.png"
+        f"{dataUse}_{file_VC}_{region}_{storage_target}_{SCC}_raw_macc_{timestamp}.png"
     )
     plot_structural_macc_curve(results, out4_structural)
 
     out4_standard = os.path.join(
         output_dir,
-        f"{dataUse}_aggregate_standard_macc_{timestamp}.png"
+        f"{dataUse}_{file_VC}_{region}_{storage_target}_{SCC}_avg_macc_{timestamp}.png"
     )
     plot_standard_macc_curve(
         results,
@@ -1340,18 +1400,18 @@ def run_100_simulations(
 
     out5 = os.path.join(
         output_dir,
-        f"{dataUse}_aggregate_pareto_scatter_{timestamp}.png"
+        f"{dataUse}_{file_VC}_{region}_{storage_target}_{SCC}_pareto_{timestamp}.png"
     )
     plot_aggregate_pareto_scatter(results, out5)
 
     out6 = os.path.join(
         output_dir,
-        f"{dataUse}_aggregate_lexicographic_scatter_{timestamp}.png"
+        f"{dataUse}_{file_VC}_{region}_{storage_target}_{SCC}_costopt_{timestamp}.png"
     )
     plot_aggregate_lexicographic_scatter(results, out6)
     out_removal = os.path.join(
         output_dir,
-        f"{dataUse}_aggregate_removal_by_method_{timestamp}.png"
+        f"{dataUse}_{file_VC}_{region}_{storage_target}_{SCC}_removal_by_method_{timestamp}.png"
     )
     plot_aggregate_method_removal(results, out_removal)
 

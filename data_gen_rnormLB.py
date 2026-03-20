@@ -2,38 +2,41 @@ import numpy as np
 
 from cdr_method import CDRMethod
 
-def generate_random_portfolioSR(pseed):
+def restricted_normal(mean, sd, rng, size=1,):
+    x = rng.normal(loc=mean, scale=sd, size=size)
+    x[x > 100] = 100
+    x[x < -100] = -100
+    return x
+
+def generate_random_portfoliornormLB(pseed):
     # Fixed 10 method families (mainType)
     #PWR and blue carbon dropped due to lack of data on global potetials
-    main_types = ["AR", "SCS", "Biochar", "BECCS", "DACCS", "ERW", "OAE", "OF"]
+    main_types = ["AR", "SCS", "Biochar", "BECCS", "DACCS", "ERW"]
 
     """"
-        raw survey data
-            Question                Mean Median  Min Max  N Range
-   Method    Mean  Median     Min   Max     N Range
-   <fct>    <dbl>   <dbl>   <dbl> <dbl> <int> <dbl>
- 1 AR       50.2   57.3    -12.6  100      22 113. 
- 2 SCS      56.4   43.7      2.51 100      21  97.5
- 3 Biochar  39.7   40.7    -60.8  100      21 161. 
- 4 BECCS     9.87  22.1   -100     73.9    22 174. 
- 5 DACCS    -4.38  -0.503  -88.9   77.9    21 167. 
- 6 ERW      35.9   34.7    -16.6   84.9    23 102. 
- 7 PWR      64.8   75.9     12.6  100      21  87.4
- 8 BC       58.6   56.8     11.6   97.0    17  85.4
- 9 OAE      35.2   37.2    -57.8   98.0    14 156. 
-10 OF      -29.1  -36.2    -82.9   94.0    14 177. 
+> print(cb05_trunc_params)
+# A tibble: 10 × 6
+   Method      low  high   mean    sd     n
+   <fct>     <dbl> <dbl>  <dbl> <dbl> <int>
+ 1 AR       -12.6  100    50.2   33.2    22
+ 2 SCS        2.51 100    56.4   36.6    21
+ 3 Biochar  -60.8  100    39.7   38.8    21
+ 4 BECCS   -100     73.9   9.87  43.3    22
+ 5 DACCS    -88.9   77.9  -4.38  47.2    21
+ 6 ERW      -16.6   84.9  35.9   29.4    23
+ 7 PWR       12.6  100    64.8   29.9    21
+ 8 BC        11.6   97.0  58.6   24.5    17
+ 9 OAE      -57.8   98.0  35.2   49.8    14
+10 OF       -82.9   94.0 -29.1   48.3    14
     """
-    raw_side_effects = {
-        "AR": (-13,100),
-        "SCS": (3,100),
-        "Biochar": (-61,100),
-        "BECCS": (-100,74),
-        "DACCS": (-89,78),
-        "ERW": (-17,85),
-        "OAE": (-58,98),
-        "OF": (-83,94)
+    side_impact_params = {
+    "AR":      (-100.0, 100.0,  50.2, 33.2),
+    "SCS":     (-100.0, 100.0,  56.4, 36.6),
+    "Biochar": (-100.0, 100.0,  39.7, 38.8),
+    "BECCS":   (-100.0, 100.0,   9.87,43.3),
+    "DACCS":   (-100.0, 100.0,  -4.38,47.2),
+    "ERW":     (-100.0, 100.0,  35.9, 29.4),
     }
-    scaled_side_effects = {k: (v[0] / 100.0, v[1] / 100.0) for k, v in raw_side_effects.items()}
     removal_max = {     #all numbers from Rueda et al. 2021 use peak potential, not 2050 potential. 
         "AR": (0.5,3.6), #Rueda et al. 2021
         "SCS": (2,5), #Rueda et al. 2021
@@ -41,8 +44,6 @@ def generate_random_portfolioSR(pseed):
         "BECCS": (0.5,5), #Rueda et al. 2021
         "DACCS": (0.7,7),#Rueda et al. 2021
         "ERW": (2.5,5),#Rueda et al. 2021 
-        "OAE": (.1,10), #Fuss et al. 2018
-        "OF": (0.000152,98) #Fuss et al. 2018
     }
 
     """""
@@ -65,8 +66,6 @@ def generate_random_portfolioSR(pseed):
         "BECCS": (.001,2.5), 
         "DACCS": (.001,4.0),
         "ERW": (.001,2.5), 
-        "OAE": (.01,1.0), 
-        "OF": (.01,1.0)
     }
 
     storage_types = {
@@ -91,8 +90,6 @@ def generate_random_portfolioSR(pseed):
         "ERW": (50, 200),
        # "PWR": (0, 45), # Niemi et al 2024 https://www.sciencedirect.com/science/article/pii/S0264837724002825
         #"BC": (10, 50), #using NOAA data https://sciencecouncil.noaa.gov/wp-content/uploads/2023/06/mCDR-glossy-final.pdf
-        "OAE": (40, 260),
-        "OF": (50, 500),
     }
 
     rng = np.random.default_rng(pseed)
@@ -103,13 +100,14 @@ def generate_random_portfolioSR(pseed):
 
         low, high = cost_ranges[main]
         lowr, highr = removal_max[main]
-        lows, highs = scaled_side_effects[main]
+        lowsi, highsi, meansi, sdsi = side_impact_params[main]
+        raw_side_effect = restricted_normal(meansi, sdsi, rng, size=1)[0]
+        scaledSideEffects = raw_side_effect / 100.0
         lowsm, highsm = removal_SEmax[main]
         mac = float(rng.uniform(low, high))
         maxRemove=float(rng.uniform(lowr,highr))
-        scaledSideEffects=float(rng.uniform(lows,highs))
         sideEffectMax=float(rng.uniform(lowsm,highsm))
-
+ 
         portfolio.append(
             CDRMethod(
                 mainType=main,
